@@ -1,0 +1,2182 @@
+---
+title: "Isolation Paper- Intra age analysis"
+author: "Farnaz Sourani"
+date: "2025-05-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# module load HPC/R-3.5.1
+# Load necessary libraries
+library(MEDIPS)
+library(MEDIPSData)
+library(GenomicRanges)
+library(BSgenome.Ggallus.UCSC.galGal6) # Gallus gallus genome
+library(seqinr)
+library(rGADEM)
+library(Biostrings)
+library(ggplot2)
+library(calibrate)
+library(maptools)
+library(dplyr)
+library(tidyr)
+library(gghighlight)
+library(ggbio)
+library(tidyverse)
+library(qtl)
+library(openxlsx) # For reading and writing Excel files
+library(ChIPseeker)
+library(org.Gg.eg.db) # Annotation for Gallus gallus
+library(TxDb.Ggallus.UCSC.galGal6.refGene) # Transcript database for Gallus gallus
+library(writexl) # Writing Excel files
+library(clusterProfiler) # For KEGG pathway analysis
+library(KEGGREST) # Access KEGG database
+library(GenomicFeatures)
+library(ggrepel)
+library(regioneR)
+
+```
+
+## set a working directory and data loading section
+
+
+```{r}
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/inta age")
+load(file="mr.edgeROI_E_IsolationEarly.rda")
+load(file="mr.edgeROI_S_IsolationEarly.rda")
+
+EdgeR_SW_Early_S_ROI<-mr.edgeROI_S; rm (mr.edgeROI_S )
+EdgeR_SW_Early_E_ROI<-mr.edgeROI_E; rm (mr.edgeROI_E)
+
+load(file="mr.edgeROI_E_IsolationOld.rda")
+load(file="mr.edgeROI_S_IsolationOld.rda")
+
+
+EdgeR_SW_Old_S_ROI<-mr.edgeROI_S; rm (mr.edgeROI_S )
+EdgeR_SW_Old_E_ROI<-mr.edgeROI_E; rm (mr.edgeROI_E)
+
+
+```
+
+data processing
+
+This code organizes genomic data for methylation analysis by assigning experimental group labels (`Young_S`, `Young_E`, `Adult_S`, `Adult_E`), creating unique region identifiers (`chr:start-stop`), and converting the data into GRanges objects. These objects efficiently store genomic regions and associated metadata (e.g., statistical values) to enable tasks like overlap analysis, visualization, and integration with annotations, streamlining downstream bioinformatics analysis.
+
+```{r}
+EdgeR_SW_Early_S_ROI$Test <- "Young_S";  EdgeR_SW_Early_S_ROI$strand <- "*"
+EdgeR_SW_Early_E_ROI$Test <- "Young_E";  EdgeR_SW_Early_E_ROI$strand <- "*"
+EdgeR_SW_Old_S_ROI$Test <- "Adult_S";  EdgeR_SW_Old_S_ROI$strand <- "*"
+EdgeR_SW_Old_E_ROI$Test <- "Adult_E";  EdgeR_SW_Old_E_ROI$strand <- "*"
+
+EdgeR_SW_Early_S_ROI$Location <- paste0(EdgeR_SW_Early_S_ROI$chr, ":", EdgeR_SW_Early_S_ROI$start, "-", EdgeR_SW_Early_S_ROI$stop)
+EdgeR_SW_Early_E_ROI$Location <- paste0(EdgeR_SW_Early_E_ROI$chr, ":", EdgeR_SW_Early_E_ROI$start, "-", EdgeR_SW_Early_E_ROI$stop)
+EdgeR_SW_Old_S_ROI$Location <- paste0(EdgeR_SW_Old_S_ROI$chr, ":", EdgeR_SW_Old_S_ROI$start, "-", EdgeR_SW_Old_S_ROI$stop)
+EdgeR_SW_Old_E_ROI$Location <- paste0(EdgeR_SW_Old_E_ROI$chr, ":", EdgeR_SW_Old_E_ROI$start, "-", EdgeR_SW_Old_E_ROI$stop)
+
+SW_Early_S_ROI <-EdgeR_SW_Early_S_ROI
+SW_Early_E_ROI <-EdgeR_SW_Early_E_ROI
+SW_Old_S_ROI <-EdgeR_SW_Old_S_ROI
+SW_Old_E_ROI <-EdgeR_SW_Old_E_ROI
+
+#GenomicRanges Objetcts
+GR_EdgeR_SW_Early_S_ROI<-with(EdgeR_SW_Early_S_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+GR_EdgeR_SW_Early_E_ROI<-with(EdgeR_SW_Early_E_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+GR_EdgeR_SW_Old_S_ROI<-with(EdgeR_SW_Old_S_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+GR_EdgeR_SW_Old_E_ROI<-with(EdgeR_SW_Old_E_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+
+GR_SW_Early_S_ROI <- GR_EdgeR_SW_Early_S_ROI
+GR_SW_Early_E_ROI <- GR_EdgeR_SW_Early_E_ROI
+GR_SW_Old_S_ROI <- GR_EdgeR_SW_Old_S_ROI
+GR_SW_Old_E_ROI <- GR_EdgeR_SW_Old_E_ROI
+
+
+
+
+```
+
+
+
+This section below extracts DNA sequences and performs computations to quantify specific patterns (CpG and GpC counts) in genomic regions, then integrates this information into the datasets for downstream analysis. 
+This code performs the following key tasks:
+- Extracts and analyzes DNA sequences from specific genomic regions.
+- Quantifies methylation-related patterns (CpG and GpC) in these regions.
+- Integrates the pattern counts into datasets for each experimental group.
+- Identifies statistically significant genomic regions based on p-value thresholds.
+- Combines significant regions across groups for comparative analysis. 
+
+The results are ready for visualization, overlap analysis, and further biological interpretation.
+```{r}
+#SEQ
+Seq_GR_SW_Early_S_ROI = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Early_S_ROI)
+Seq_GR_SW_Early_E_ROI = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Early_E_ROI)
+Seq_GR_SW_Old_S_ROI = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Old_S_ROI)
+Seq_GR_SW_Old_E_ROI = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Old_E_ROI)
+
+Seq_CG_GR_SW_Early_S_ROI <- vcountPattern("CG", Seq_GR_SW_Early_S_ROI)
+Seq_CG_GR_SW_Early_E_ROI <- vcountPattern("CG", Seq_GR_SW_Early_E_ROI)
+Seq_CG_GR_SW_Old_S_ROI <- vcountPattern("CG", Seq_GR_SW_Old_S_ROI)
+Seq_CG_GR_SW_Old_E_ROI <- vcountPattern("CG", Seq_GR_SW_Old_E_ROI)
+
+Seq_GC_GR_SW_Early_S_ROI <- vcountPattern("GC", Seq_GR_SW_Early_S_ROI)
+Seq_GC_GR_SW_Early_E_ROI <- vcountPattern("GC", Seq_GR_SW_Early_E_ROI)
+Seq_GC_GR_SW_Old_S_ROI <- vcountPattern("GC", Seq_GR_SW_Old_S_ROI)
+Seq_GC_GR_SW_Old_E_ROI <- vcountPattern("GC", Seq_GR_SW_Old_E_ROI)
+
+
+#add CpG and GpC collumn to the Grange objects
+CG<- Seq_CG_GR_SW_Early_S_ROI
+GC<- Seq_GC_GR_SW_Early_S_ROI
+SW_Early_S_ROI <- cbind(SW_Early_S_ROI, CG,GC)
+CG<- Seq_CG_GR_SW_Early_E_ROI
+GC<- Seq_GC_GR_SW_Early_E_ROI
+SW_Early_E_ROI <- cbind(SW_Early_E_ROI, CG,GC)
+CG<- Seq_CG_GR_SW_Old_S_ROI
+GC<- Seq_GC_GR_SW_Old_S_ROI
+SW_Old_S_ROI <- cbind(SW_Old_S_ROI, CG,GC)
+CG<- Seq_CG_GR_SW_Old_E_ROI
+GC<- Seq_GC_GR_SW_Old_E_ROI
+SW_Old_E_ROI <- cbind(SW_Old_E_ROI, CG,GC)
+
+#Genomic Ranges Object
+GR_SW_Early_S_ROI <-with(SW_Early_S_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+GR_SW_Early_E_ROI <-with(SW_Early_E_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+GR_SW_Old_S_ROI <-with(SW_Old_S_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+GR_SW_Old_E_ROI <-with(SW_Old_E_ROI, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+
+SW_Young_S_adj0.5 <- subset(GR_SW_Early_S_ROI, edgeR.adj.p.value<.51)
+SW_Young_E_adj0.5 <- subset(GR_SW_Early_E_ROI, edgeR.adj.p.value<.51)
+SW_Adult_S_adj0.5 <- subset(GR_SW_Old_S_ROI, edgeR.adj.p.value<.51)
+SW_Adult_E_adj0.5 <- subset(GR_SW_Old_E_ROI, edgeR.adj.p.value<.51)
+
+SW_All_adj0.5 <- c(SW_Young_S_adj0.5, SW_Young_E_adj0.5, SW_Adult_S_adj0.5, SW_Adult_E_adj0.5)
+
+#Sweden low p-value
+#BRSW_EE_S_ROI <- subset(GR_EdgeR_SW_Early_S_ROI, edgeR.p.value<.0005)
+#All low p-value 0.0005
+GR_SW_Early_S_ROI_p.0005<- subset(GR_SW_Early_S_ROI, edgeR.p.value<.0005)
+GR_SW_Early_E_ROI_p.0005<- subset(GR_SW_Early_E_ROI, edgeR.p.value<.0005)
+GR_SW_Old_S_ROI_p.0005<- subset(GR_SW_Old_S_ROI, edgeR.p.value<.0005)
+GR_SW_Old_E_ROI_p.0005<- subset(GR_SW_Old_E_ROI, edgeR.p.value<.0005)
+#p-value0.005
+GR_SW_Early_S_ROI_p.005<- subset(GR_SW_Early_S_ROI, edgeR.p.value<.005)
+GR_SW_Early_E_ROI_p.005<- subset(GR_SW_Early_E_ROI, edgeR.p.value<.005)
+GR_SW_Old_S_ROI_p.005<- subset(GR_SW_Old_S_ROI, edgeR.p.value<.005)
+GR_SW_Old_E_ROI_p.005<- subset(GR_SW_Old_E_ROI, edgeR.p.value<.005)
+
+GR_SW_Early_S_ROI_p.05<- subset(GR_SW_Early_S_ROI, edgeR.p.value<.05)
+GR_SW_Early_E_ROI_p.05<- subset(GR_SW_Early_E_ROI, edgeR.p.value<.05)
+GR_SW_Old_S_ROI_p.05<- subset(GR_SW_Old_S_ROI, edgeR.p.value<.05)
+GR_SW_Old_E_ROI_p.05<- subset(GR_SW_Old_E_ROI, edgeR.p.value<.05)
+
+#p-value0.001
+
+GR_SW_Early_S_ROI_p.01<- subset(GR_SW_Early_S_ROI, edgeR.p.value<.01)
+GR_SW_Early_E_ROI_p.01<- subset(GR_SW_Early_E_ROI, edgeR.p.value<.01)
+GR_SW_Old_S_ROI_p.01<- subset(GR_SW_Old_S_ROI, edgeR.p.value<.01)
+GR_SW_Old_E_ROI_p.01<- subset(GR_SW_Old_E_ROI, edgeR.p.value<.01)
+
+
+# #adjusted pvelue 
+# GR_SW_Early_S_ROI_adj_p_gt_0.05 <- subset(GR_SW_Early_S_ROI, edgeR.adj.p.value < 0.05)
+# GR_SW_Early_E_ROI_adj_p_gt_0.05 <- subset(GR_SW_Early_E_ROI, edgeR.adj.p.value < 0.05)
+# GR_SW_Old_S_ROI_adj_p_gt_0.05 <- subset(GR_SW_Old_S_ROI, edgeR.adj.p.value < 0.05)
+# GR_SW_Old_E_ROI_adj_p_gt_0.05 <- subset(GR_SW_Old_E_ROI, edgeR.adj.p.value < 0.05)
+
+```
+
+table two to get the number of min counts per row
+
+```{r}
+# Create a summary table
+dmr_counts <- data.frame(
+  Group = c("Young_S", "Young_E", "Adult_S", "Adult_E"),
+ 
+  p_001 = c(length(GR_SW_Early_S_ROI_p.01),
+            length(GR_SW_Early_E_ROI_p.01),
+            length(GR_SW_Old_S_ROI_p.01),
+            length(GR_SW_Old_E_ROI_p.01)),
+  
+  p_05 = c(length(GR_SW_Early_S_ROI_p.05),
+           length(GR_SW_Early_E_ROI_p.05),
+           length(GR_SW_Old_S_ROI_p.05),
+           length(GR_SW_Old_E_ROI_p.05))
+)
+
+print(dmr_counts)
+
+# write_xlsx(dmr_counts, "table2-publication.xlsx")
+
+
+```
+
+below: Purpose of the Code
+The main goals of this section are:
+
+To save genomic ranges and sequences of interest for further analysis.
+To extend genomic regions for broader contextual study.
+To identify and analyze overlaps between regions across experimental groups.
+To export and organize the results for visualization, motif discovery, or other downstream workflows.
+The exported data can be used to highlight significant genomic features, identify shared regions across conditions, and analyze methylation patterns or sequence motifs in the extended or overlapping ranges.
+
+table 2 continue checking minrowsum
+
+```{r}
+# Set the value used for filtering
+minRowSum_value <- 10
+
+# Total number of regions before filtering
+total_YSvsYC <- length(GR_SW_Early_S_ROI)
+total_YEvsYC <- length(GR_SW_Early_E_ROI)
+total_ASvsAC <- length(GR_SW_Old_S_ROI)
+total_AEvsAC <- length(GR_SW_Old_E_ROI)
+
+# Number of regions tested after filtering (adjust p-value < 1 for full tested set)
+tested_YSvsYC <- length(GR_SW_Early_S_ROI[GR_SW_Early_S_ROI$edgeR.p.value < 1])
+tested_YEvsYC <- length(GR_SW_Early_E_ROI[GR_SW_Early_E_ROI$edgeR.p.value < 1])
+tested_ASvsAC <- length(GR_SW_Old_S_ROI[GR_SW_Old_S_ROI$edgeR.p.value < 1])
+tested_AEvsAC <- length(GR_SW_Old_E_ROI[GR_SW_Old_E_ROI$edgeR.p.value < 1])
+
+# Create a summary table
+minrowsum_table <- data.frame(
+  Group = c("minRowSum", "YSvsYC", "YSvsYC", "YEvsYC", "YEvsYC", "ASvsAC", "ASvsAC", "AEvsAC", "AEvsAC"),
+  Status = c(minRowSum_value, "Total", "Tested", "Total", "Tested", "Total", "Tested", "Total", "Tested"),
+  Count = c("", total_YSvsYC, tested_YSvsYC, total_YEvsYC, tested_YEvsYC, total_ASvsAC, tested_ASvsAC, total_AEvsAC, tested_AEvsAC)
+)
+print(minrowsum_table)
+write_xlsx(minrowsum_table, "table2a-publication.xlsx")
+
+```
+
+#combined table2 publication
+
+```{r}
+# Set the value used for filtering
+minRowSum_value <- 10
+
+# Total and tested
+total <- c(
+  length(GR_SW_Early_S_ROI),
+  length(GR_SW_Early_E_ROI),
+  length(GR_SW_Old_S_ROI),
+  length(GR_SW_Old_E_ROI)
+)
+
+tested <- c(
+  length(GR_SW_Early_S_ROI[GR_SW_Early_S_ROI$edgeR.p.value < 1]),
+  length(GR_SW_Early_E_ROI[GR_SW_Early_E_ROI$edgeR.p.value < 1]),
+  length(GR_SW_Old_S_ROI[GR_SW_Old_S_ROI$edgeR.p.value < 1]),
+  length(GR_SW_Old_E_ROI[GR_SW_Old_E_ROI$edgeR.p.value < 1])
+)
+
+# Significant at different p-values
+p_05 <- c(
+  length(GR_SW_Early_S_ROI_p.05),
+  length(GR_SW_Early_E_ROI_p.05),
+  length(GR_SW_Old_S_ROI_p.05),
+  length(GR_SW_Old_E_ROI_p.05)
+)
+
+p_01 <- c(
+  length(GR_SW_Early_S_ROI_p.01),
+  length(GR_SW_Early_E_ROI_p.01),
+  length(GR_SW_Old_S_ROI_p.01),
+  length(GR_SW_Old_E_ROI_p.01)
+)
+
+# Final combined table
+table2_combined <- data.frame(
+  Group = c("YSvsYC", "YEvsYC", "ASvsAC", "AEvsAC"),
+  Total = total,
+  Tested = tested,
+  `p<0.05` = p_05,
+  `p<0.01` = p_01,
+  minRowSum = minRowSum_value  # repeat for clarity or make a footnote in paper
+)
+
+print(table2_combined)
+
+# Optional: export to Excel
+write_xlsx(table2_combined, "Table2_Combined_Publication.xlsx")
+
+```
+
+
+```{r, eval=FALSE}
+#write ranges
+# write.table(GR_SW_Early_S_ROI_p.01 , "GR_SW_Early_S_ROI_p.01.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Early_E_ROI_p.01 , "GR_SW_Early_E_ROI_p.01.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_S_ROI_p.01 , "GR_SW_Old_S_ROI_p.01.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_E_ROI_p.01 , "GR_SW_Old_E_ROI_p.01.txt", sep="\t", col.names=T, row.names=T, quote=F)
+
+
+# write.table(as.data.frame(GR_SW_Early_S_ROI_adj_p_gt_0.05), "GR_SW_Early_S_ROI_adj_p_gt_0.05.txt", sep="\t", col.names=TRUE, row.names=FALSE, quote=FALSE)
+
+# write.table(GR_SW_Early_S_ROI_p.05 , "GR_SW_Early_S_ROI_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Early_E_ROI_p.05 , "GR_SW_Early_E_ROI_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_S_ROI_p.05 , "GR_SW_Old_S_ROI_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_E_ROI_p.05 , "GR_SW_Old_E_ROI_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+
+# write.table(GR_SW_Early_S_ROI_p.005 , "GR_SW_Early_S_ROI_p.005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Early_E_ROI_p.005 , "GR_SW_Early_E_ROI_p.005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_S_ROI_p.005 , "GR_SW_Old_S_ROI_p.005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_E_ROI_p.005 , "GR_SW_Old_E_ROI_p.005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# 
+# write.table(GR_SW_Early_S_ROI_p.0005 , "GR_SW_Early_S_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Early_E_ROI_p.0005 , "GR_SW_Early_E_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_S_ROI_p.0005 , "GR_SW_Old_S_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# write.table(GR_SW_Old_E_ROI_p.0005 , "GR_SW_Old_E_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+# 
+# #All low p-value 0.005
+# 
+# #Extend range in charge to get a larger interval
+# #windextend <- BRSW_EE_S
+# #start(windextend) <- start(windextend) - 300
+# #end(windextend) <- end(windextend) + 300
+# 
+
+#SEQ
+# setwd("/home/fabio/postdoc/IsolationOverlap/gga6")
+seq_windextend = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, windextend)
+Biostrings::writeXStringSet(seq_windextend, "seq_windextend.fasta")
+
+
+Seq_GR_SW_Early_S_ROI_p.0005 = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Early_S_ROI_p.0005)
+Seq_GR_SW_Early_E_ROI_p.0005 = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Early_E_ROI_p.0005)
+Seq_GR_SW_Old_S_ROI_p.0005 = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Old_S_ROI_p.0005)
+Seq_GR_SW_Old_E_ROI_p.0005 = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_SW_Old_E_ROI_p.0005)
+
+
+names(seq) = paste0("SEQUENCE_", seq_along(seq))
+Biostrings::writeXStringSet(seq, "olapsBReSWe.fasta")
+
+names(seq1) = paste0("SEQUENCE_", seq_along(seq1))
+Biostrings::writeXStringSet(seq1, "lapsBReSWo.fasta")
+
+names(seq) = paste0("SEQUENCE_", seq_along(seq))
+Biostrings::writeXStringSet(seq, "my.fasta")
+
+write.table(Seq_GR_SW_Early_S_ROI_p.0005 , "Seq_GR_SW_Early_S_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+write.table(Seq_GR_SW_Early_E_ROI_p.0005 , "Seq_GR_SW_Early_E_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+write.table(Seq_GR_SW_Old_S_ROI_p.0005 , "Seq_GR_SW_Old_S_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+write.table(Seq_GR_SW_Old_E_ROI_p.0005 , "Seq_GR_SW_Old_E_ROI_p.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+
+
+#to extend the windows
+#start(GR_BR_Early_S)<- start(GR_BR_Early_S) - 1000
+#stop(GR_BR_Early_S)<- stop(GR_BR_Early_S) + 1000
+#start(gr) <- start(gr) - 10
+#end(gr) <- end(gr) + 10
+
+#start(GR_SW_Early_S_ROI_p.0005)<- start(GR_SW_Early_S_ROI_p.0005) - 300
+#start(GR_SW_Early_E_ROI_p.0005)<- start(GR_SW_Early_E_ROI_p.0005) - 300
+#start(GR_SW_Old_S_ROI_p.0005)<- start(GR_SW_Old_S_ROI_p.0005) - 300
+#start(GR_SW_Old_E_ROI_p.0005)<- start(GR_SW_Old_E_ROI_p.0005) - 300
+#end(GR_SW_Early_S_ROI_p.0005)<- end(GR_SW_Early_S_ROI_p.0005) + 300
+#end(GR_SW_Early_E_ROI_p.0005)<- end(GR_SW_Early_E_ROI_p.0005) + 300
+#end(GR_SW_Old_S_ROI_p.0005)<- end(GR_SW_Old_S_ROI_p.0005) + 300
+#end(GR_SW_Old_E_ROI_p.0005)<- end(GR_SW_Old_E_ROI_p.0005) + 300
+#write.table(Seq_GR_SW_Early_S_ROI_p.0005 , "Seq_GR_SW_Early_S_ROI_p.0005_300bp.txt", sep="\t", col.names=T, row.names=T, quote=F)
+#write.table(Seq_GR_SW_Early_E_ROI_p.0005 , "Seq_GR_SW_Early_E_ROI_p_300bp.0005.txt", sep="\t", col.names=T, row.names=T, quote=F)
+#write.table(Seq_GR_SW_Old_S_ROI_p.0005 , "Seq_GR_SW_Old_S_ROI_p.0005_300bp.txt", sep="\t", col.names=T, row.names=T, quote=F)
+#write.table(Seq_GR_SW_Old_E_ROI_p.0005 , "Seq_GR_SW_Old_E_ROI_p.0005_300bp.txt", sep="\t", col.names=T, row.names=T, quote=F)
+
+#extend p.005 windows in 3k
+#start(GR_SW_Early_S_ROI_p.005)<- start(GR_SW_Early_S_ROI_p.005) - 20000
+#start(GR_SW_Early_E_ROI_p.005)<- start(GR_SW_Early_E_ROI_p.005) - 20000
+#start(GR_SW_Old_S_ROI_p.005)<- start(GR_SW_Old_S_ROI_p.005) - 20000
+#start(GR_SW_Old_E_ROI_p.005)<- start(GR_SW_Old_E_ROI_p.005) - 20000
+#end(GR_BR_Early_S_ROI_p.005)<- end(GR_BR_Early_S_ROI_p.005) + 20000
+#end(GR_SW_Early_S_ROI_p.005)<- end(GR_SW_Early_S_ROI_p.005) + 20000
+#end(GR_SW_Early_E_ROI_p.005)<- end(GR_SW_Early_E_ROI_p.005) + 20000
+#end(GR_SW_Old_S_ROI_p.005)<- end(GR_SW_Old_S_ROI_p.005) + 20000
+#end(GR_SW_Old_E_ROI_p.005)<- end(GR_SW_Old_E_ROI_p.005) + 20000
+
+
+#laps - Brasil Early vs Sweden Early
+#SW_E_ES_p.05 <-subsetByOverlaps(GR_SW_Early_S_ROI_p.05, GR_SW_Early_E_ROI_p.05)
+#SW_O_ES_p.05 <-subsetByOverlaps(GR_SW_Old_S_ROI_p.05, GR_SW_Old_E_ROI_p.05)
+
+#SW_EO_E_p.05 <-subsetByOverlaps(GR_SW_Early_E_ROI_p.05, GR_SW_Old_E_ROI_p.05)
+#SW_EO_S_p.05 <-subsetByOverlaps(GR_SW_Early_S_ROI_p.05, GR_SW_Old_S_ROI_p.05)
+
+SW_E_SE <-subsetByOverlaps(GR_SW_Early_S_ROI, GR_SW_Early_E_ROI)
+SW_O_SE <-subsetByOverlaps(GR_SW_Old_S_ROI, GR_SW_Old_E_ROI)
+SW_E_ES <-subsetByOverlaps(GR_SW_Early_E_ROI, GR_SW_Early_S_ROI)
+SW_O_ES <-subsetByOverlaps(GR_SW_Old_E_ROI, GR_SW_Old_S_ROI)
+
+
+SW_EO_E <-subsetByOverlaps(GR_SW_Early_E_ROI, GR_SW_Old_E_ROI)
+SW_EO_S <-subsetByOverlaps(GR_SW_Early_S_ROI, GR_SW_Old_S_ROI)
+SW_OE_E <-subsetByOverlaps(GR_SW_Old_E_ROI, GR_SW_Early_E_ROI)
+SW_OE_S <-subsetByOverlaps(GR_SW_Old_S_ROI, GR_SW_Early_S_ROI)
+
+SW_E_SE_p.05 <-subsetByOverlaps(GR_SW_Early_S_ROI_p.05, GR_SW_Early_E_ROI_p.05)
+SW_O_SE_p.05 <-subsetByOverlaps(GR_SW_Old_S_ROI_p.05, GR_SW_Old_E_ROI_p.05)
+SW_E_ES_p.05 <-subsetByOverlaps(GR_SW_Early_E_ROI_p.05, GR_SW_Early_S_ROI_p.05)
+SW_O_ES_p.05 <-subsetByOverlaps(GR_SW_Old_E_ROI_p.05, GR_SW_Old_S_ROI_p.05)
+
+
+SW_EO_E_p.05 <-subsetByOverlaps(GR_SW_Early_E_ROI_p.05, GR_SW_Old_E_ROI_p.05)
+SW_EO_S_p.05 <-subsetByOverlaps(GR_SW_Early_S_ROI_p.05, GR_SW_Old_S_ROI_p.05)
+SW_OE_E_p.05 <-subsetByOverlaps(GR_SW_Old_E_ROI_p.05, GR_SW_Early_E_ROI_p.05)
+SW_OE_S_p.05 <-subsetByOverlaps(GR_SW_Old_S_ROI_p.05, GR_SW_Early_S_ROI_p.05)
+
+overlap0.5 <- c(SW_E_SE_p.05, SW_E_ES_p.05,  SW_O_SE_p.05, SW_O_ES_p.05, SW_OE_E_p.05, SW_EO_E_p.05, SW_OE_S_p.05, SW_EO_S_p.05)
+
+EOvsSE <- subsetByOverlaps (SW_E_ES, SW_O_ES) #113
+OEvsSE <- subsetByOverlaps (SW_O_ES, SW_E_ES) #113
+
+ESvsEO <- subsetByOverlaps (SW_EO_E, SW_EO_S) #121
+SEvsEO <- subsetByOverlaps (SW_EO_S, SW_EO_E) #121
+
+EOSE<- subsetByOverlaps(EOvsSE,SEvsEO) #111
+SEEO<- subsetByOverlaps(SEvsEO,EOvsSE) #111
+
+#write.table(as.data.frame(SW_DMRROI_EE_S_p.05) , "SW_DMRROI_EE_S_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+#write.table(as.data.frame(SW_ROIDMR_EE_S_p.05) , "SW_ROIDMR_EE_S_p.05.txt", sep="\t", col.names=T, row.names=T, quote=F)
+
+```
+
+Volcano Plot for Individual Comparisons
+First Question: Significant DMR Windows
+```{r}
+# Combine results into one object
+resSW_ES <- GR_SW_Early_S_ROI
+resSW_EE <- GR_SW_Early_E_ROI
+resSW_OS <- GR_SW_Old_S_ROI
+resSW_OE <- GR_SW_Old_E_ROI
+resbind <- c(resSW_ES, resSW_EE, resSW_OS, resSW_OE)
+
+# Plot volcano for Early Stress vs Enrichment
+# tiff("Volcano_Young_Early_Stress_vs_Enrich.tiff", units="cm", width=30, height=30, res=600, compression="lzw")
+with(resbind, plot(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="white", main="Volcano plot", xlim=c(-4, 6)))
+abline(h=-log10(0.05), col="red")
+# dev.off()
+
+```
+
+
+Overlap Analysis of DMRs
+Second Question: Overlap Between Stress and Enrichment
+```{r}
+# Add code for overlap analysis
+# Example:
+# tiff("Volcano_Overlap.tiff", units="cm", width=30, height=30, res=600, compression="lzw")
+with(resbind, plot(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="white", main="Volcano Overlap", xlim=c(-4, 6)))
+abline(h=-log10(0.05), col="red")
+# dev.off()
+
+```
+volcano plot for young group
+
+```{r}
+## Volcano Plot: Young Group
+resSW_ES_df <- data.frame(
+  logFC = mcols(resSW_ES)$edgeR.logFC,
+  Test = mcols(resSW_ES)$Test,
+  p.value = mcols(resSW_ES)$edgeR.p.value,
+  Location = mcols(resSW_ES)$Location)
+
+
+resSW_EE_df <- data.frame(
+  logFC = mcols(resSW_EE)$edgeR.logFC,
+  Test= mcols(resSW_EE)$Test,
+  p.value = mcols(resSW_EE)$edgeR.p.value,
+  Location = mcols(resSW_EE)$Location)
+# Combine Early S and Early E data into one data frame for the Young group
+resYoung_df <- rbind(resSW_ES_df, resSW_EE_df)
+# png("Volcano_Young_intra_age.png", width = 3000, height = 3000, res = 300)
+tiff("Volcano_Young_Intra age_purple.tiff", units="cm", width=20, height=20, res=600, compression="lzw")
+
+# Create the basic volcano plot with larger axis labels
+with(resYoung_df, plot(logFC, -log10(p.value), pch=20, col="white", 
+                       main="Y", 
+                       xlim=c(-4, 6), cex.lab=1.5, cex.main=1.5,                        xlab="Log2 Fold Change (FC)",  # Label for X-axis
+                       ylab="-Log10 P-value",        # Label for Y-axis
+                       cex.lab=1.6,                  # Larger label size for axes
+                       cex.main=1.8,                 # Larger title size
+                       cex.axis=1.4))                # Larger tick label size))  # Increase label and title size
+
+# Add points for significant results (p-value < 0.9)
+with(subset(resSW_ES_df, p.value < 0.9), points(logFC, -log10(p.value), pch=20, col="purple"))
+with(subset(resSW_EE_df, p.value < 0.9), points(logFC, -log10(p.value), pch=20, col="green"))
+
+# Highlight significant points (p-value < 0.05 and logFC > 1)
+with(subset(resSW_ES_df, p.value < 0.05 & abs(logFC) > 1), 
+     points(logFC, -log10(p.value), pch=20, col="purple", cex=1.2)) 
+with(subset(resSW_EE_df, p.value < 0.05 & abs(logFC) > 1), 
+     points(logFC, -log10(p.value), pch=20, col="green", cex=1.2))
+
+# Add significance thresholds with new styles
+abline(h=-log10(0.05), col="black", lty=1)   # p = 0.05, solid black line
+abline(h=-log10(0.01), col="black", lty=2)     # p = 0.1, dashed blue line
+
+# Label p-value thresholds above the lines with larger text
+
+text(x = 4.5, y = -log10(0.05) + 0.1, labels = "p = 0.05", col = "black", pos = 4, cex=1.3)
+text(x = 4.5, y = -log10(0.01) + 0.1, labels = "p = 0.01", col = "black", pos = 4, cex=1.3)
+# Add a custom legend with specific colors
+legend("topright", legend=c("(YS vs. YC)", "(YE vs. YC)"),
+       col=c("purple", "green"), pch=20, cex=1.2)  # Enlarge legend text
+dev.off()
+```
+volcano plot for adult group
+```{r}
+#2.old group
+# Extract necessary columns (logFC and p.value) from GRanges objects
+resSW_OS_df <- data.frame(
+  logFC = mcols(resSW_OS)$edgeR.logFC,
+  Test = mcols(resSW_OS)$Test,
+  p.value = mcols(resSW_OS)$edgeR.p.value,
+  Location = mcols(resSW_OS)$Location )
+
+
+resSW_OE_df <- data.frame(
+  logFC = mcols(resSW_OE)$edgeR.logFC,
+  p.value = mcols(resSW_OE)$edgeR.p.value,
+  Test = mcols(resSW_OE)$Test,
+  Location = mcols(resSW_OE)$Location)
+
+
+# Combine Old S and Old E data into one data frame for the Old group
+resOld_df <- rbind(resSW_OS_df, resSW_OE_df)
+
+
+tiff("Volcano_Adult_Intra_age_purple.tiff", units="cm", width=20, height=20, res=600, compression="lzw")
+
+# Create the basic volcano plot
+with(resOld_df, plot(logFC, -log10(p.value), pch=20, col="white", 
+                     main="A", 
+                     xlim=c(-4, 6), cex.lab=1.5, cex.main=1.5, 
+                       xlab="Log2 Fold Change (FC)",  
+                       ylab="-Log10 P-value",        # Label for Y-axis
+                       cex.lab=1.6,                  # Larger label size for axes
+                       cex.main=1.8,                 # Larger title size
+                       cex.axis=1.4)) # Increase label and title size
+# Add points for significant results (p-value < 0.9)
+with(subset(resSW_OS_df, p.value < 0.9), points(logFC, -log10(p.value), pch=20, col="purple"))
+with(subset(resSW_OE_df, p.value < 0.9), points(logFC, -log10(p.value), pch=20, col="green"))
+
+# Highlight significant points (p-value < 0.05 and logFC > 1) without labels
+with(subset(resSW_OS_df, p.value < 0.05 & abs(logFC) > 1), 
+     points(logFC, -log10(p.value), pch=20, col="purple", cex=1.2)) # Change color and size if desired
+with(subset(resSW_OE_df, p.value < 0.05 & abs(logFC) > 1), 
+     points(logFC, -log10(p.value), pch=20, col="green", cex=1.2)) # Change color and size if desired
+
+# Add significance thresholds with new styles
+abline(h=-log10(0.05), col="black", lty=1)   # p = 0.05, solid black line
+abline(h=-log10(0.01), col="black", lty=2)     # p = 0.1, dashed blue line
+
+# Label p-value thresholds above the lines with larger text
+text(x = 4.5, y = -log10(0.05) + 0.1, labels = "p = 0.05", col = "black", pos = 4, cex=1.3)
+text(x = 4.5, y = -log10(0.01) + 0.1, labels = "p = 0.01", col = "black", pos = 4, cex=1.3)
+# Add a custom legend with specific colors
+legend("topright", legend=c("(AS vs. AC)", "(AE vs. AC)"),
+       col=c("purple", "green"), pch=20, cex=1.2)  # Enlarge legend text
+dev.off()
+
+```
+
+
+
+Annotation of Significant Peaks
+```{r}
+# Annotate significant peaks
+library(TxDb.Ggallus.UCSC.galGal6.refGene)
+library(ChIPseeker)
+gg_txdb <- TxDb.Ggallus.UCSC.galGal6.refGene
+peakAnno <- annotatePeak(GR_SW_Early_S_ROI, TxDb=gg_txdb, annoDb="org.Gg.eg.db")
+print(as.data.frame(peakAnno))
+```
+#extracting #supplementary table
+```{r}
+
+# Load necessary libraries
+library(TxDb.Ggallus.UCSC.galGal6.refGene)
+library(ChIPseeker)
+library(org.Gg.eg.db)
+library(writexl)
+
+# Load the transcript database
+gg_txdb <- TxDb.Ggallus.UCSC.galGal6.refGene
+
+# List of GRanges objects and their names
+gr_objects <- list(
+  "Early_S" = GR_SW_Early_S_ROI,
+  "Early_E" = GR_SW_Early_E_ROI,
+  "Old_S" = GR_SW_Old_S_ROI,
+  "Old_E" = GR_SW_Old_E_ROI
+)
+
+# Initialize a list to store filtered results
+filtered_results <- list()
+
+# Loop through each GRanges object, annotate and filter
+for (name in names(gr_objects)) {
+  # Annotate peaks
+  peakAnno <- annotatePeak(gr_objects[[name]], TxDb=gg_txdb, annoDb="org.Gg.eg.db")
+  
+  # Convert to data frame
+  peakAnno_df <- as.data.frame(peakAnno)
+  
+  # Filter the data frame to include only rows where p-value is less than 0.05
+  # filtered_peakAnno <- peakAnno_df[peakAnno_df$edgeR.p.value < 0.05, ]
+  filtered_peakAnno <- peakAnno_df[peakAnno_df$edgeR.p.value < 0.01, ]
+  # Store the filtered results in the list
+  filtered_results[[name]] <- filtered_peakAnno
+}
+
+# Save all filtered results to an Excel file with each data frame in a separate sheet
+ # write_xlsx(filtered_results, path = "Filtered_PeakAnno_p0.05_all.xlsx")
+  # write_xlsx(filtered_results, path = "Filtered_PeakAnno_p0.01_all.xlsx")
+
+```
+
+```{r}
+# Load necessary libraries
+library(readxl)
+library(GenomicRanges)
+library(TxDb.Ggallus.UCSC.galGal6.refGene)
+library(ChIPseeker)
+library(org.Gg.eg.db)
+library(writexl)
+
+# Step 1: Load all sheets
+sheets <- excel_sheets("Unique_DMRs_Combined.xlsx")
+dmr_data_list <- lapply(sheets, function(sheet) read_excel("Unique_DMRs_Combined.xlsx", sheet = sheet))
+names(dmr_data_list) <- sheets
+
+# Step 2: Annotate each sheet
+gg_txdb <- TxDb.Ggallus.UCSC.galGal6.refGene  # Load transcript database
+annotated_results <- list()  # To store results
+
+for (sheet_name in sheets) {
+  # Read data from the current sheet
+  dmr_data <- dmr_data_list[[sheet_name]]
+  
+  # Standardize column names
+  colnames(dmr_data) <- c("seqnames", "start", "end", "width", "strand", 
+                          "annotation", "geneChr", "geneStart", "geneEnd", 
+                          "geneLength", "geneStrand", "geneId", "transcriptId", 
+                          "distanceToTSS", "ENSEMBL", "SYMBOL", "GENENAME")
+  
+  dmr_data$seqnames <- as.character(dmr_data$seqnames)
+  
+  # Convert to GRanges
+  dmr_gr <- GRanges(seqnames = dmr_data$seqnames,
+                    ranges = IRanges(start = dmr_data$start, end = dmr_data$end))
+  
+  # Annotate peaks
+  annotated <- annotatePeak(dmr_gr, 
+                            tssRegion = c(-3000, 3000), 
+                            TxDb = gg_txdb, 
+                            annoDb = "org.Gg.eg.db")
+  
+  # Convert to data frame and store
+  annotated_results[[sheet_name]] <- as.data.frame(annotated)
+}
+
+# Step 3: Save all annotated results to an Excel file
+#write_xlsx(annotated_results, path = "Annotated_Unique_DMRs_Combined.xlsx")
+
+```
+
+
+
+Genome-Wide Visualization
+Manhattan Plot for Fold Change
+
+```{r}
+# Plot Manhattan for Fold Change
+# tiff("Manhattan_Fold_Change.tiff", units="cm", width=30, height=15, res=600, compression="lzw")
+autoplot(resbind, coord = "genome", geom = "point", aes(y = edgeR.logFC, color=Test), space.skip = 0.01) +
+  scale_color_manual(values=c("cyan3", "yellow3", "cyan", "yellow")) +
+  geom_hline(yintercept=0, color='black', size=0.2)
+# dev.off()
+
+```
+```{r}
+# List of GRanges objects per treatment
+# dmr_granges <- list(
+#   "Young_S" = GR_SW_Early_S_ROI_p.05,
+#   "Young_E" = GR_SW_Early_E_ROI,
+#   "Adult_S" = GR_SW_Old_S_ROI,
+#   "Adult_E" = GR_SW_Old_E_ROI
+# )
+dmr_granges <- list(
+  "Young_S" = GR_SW_Early_S_ROI_p.05,
+  "Young_E" = GR_SW_Early_E_ROI_p.05,
+  "Adult_S" = GR_SW_Old_S_ROI_p.05,
+  "Adult_E" = GR_SW_Old_E_ROI_p.05
+)
+
+# Function to count DMRs per chromosome
+count_dmrs_per_chr <- function(gr_obj, treatment_name) {
+  data.frame(
+    Treatment = treatment_name,
+    Chromosome = as.character(seqnames(gr_obj)),
+    stringsAsFactors = FALSE
+  ) %>%
+    count(Treatment, Chromosome, name = "DMR_Count")
+}
+
+# Apply the function to all treatments and combine results
+dmr_chr_counts <- bind_rows(
+  lapply(names(dmr_granges), function(name) {
+    count_dmrs_per_chr(dmr_granges[[name]], name)
+  })
+)
+
+# View result
+print(dmr_chr_counts)
+
+# Optional: Save to Excel or CSV
+# write.csv(dmr_chr_counts, "DMR_counts_per_chromosome_per_treatment.csv", row.names = FALSE)
+write_xlsx(dmr_chr_counts, path = "DMR_counts_per_chromosome_per_treatment_0.05.xlsx")
+library(ggplot2)
+library(dplyr)
+
+# Set the chromosome order explicitly (adjust if your chromosomes differ)
+chrom_order <- paste0("chr", c(1:33,  "Z" , "W"))
+dmr_chr_counts$Chromosome <- factor(dmr_chr_counts$Chromosome, levels = chrom_order)
+
+# --- YOUNG GROUP PLOT ---
+dmr_young <- dmr_chr_counts %>%
+  filter(Treatment %in% c("Young_S", "Young_E"))
+
+young_plot <-ggplot(dmr_young, aes(x = Chromosome, y = DMR_Count, fill = Treatment)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7)) +
+  scale_x_discrete(drop = FALSE) +
+  labs(title = "DMRs per Chromosome - Young Group",
+       x = "Chromosome", y = "Number of DMRs") +
+  scale_fill_manual(values = c("Young_S" = "purple", "Young_E" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold"))
+ggsave("DMR_Chromosome_Young.png", plot = young_plot, width = 10, height = 6, units = "in", dpi = 600)
+
+# --- ADULT GROUP PLOT ---
+dmr_adult <- dmr_chr_counts %>%
+  filter(Treatment %in% c("Adult_S", "Adult_E"))
+
+adult_plot <-ggplot(dmr_adult, aes(x = Chromosome, y = DMR_Count, fill = Treatment)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7)) +
+  scale_x_discrete(drop = FALSE) +
+  labs(title = "DMRs per Chromosome - Adult Group",
+       x = "Chromosome", y = "Number of DMRs") +
+  scale_fill_manual(values = c("Adult_S" = "purple", "Adult_E" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold"))
+ggsave("DMR_Chromosome_Adult.png", plot = adult_plot, width = 10, height = 6, units = "in", dpi = 600)
+
+```
+
+```{r}
+# Step 1: List of GRanges objects per treatment
+dmr_granges <- list(
+  "Young_S" = GR_SW_Early_S_ROI,
+  "Young_E" = GR_SW_Early_E_ROI,
+  "Adult_S" = GR_SW_Old_S_ROI,
+  "Adult_E" = GR_SW_Old_E_ROI
+)
+
+# Step 2: Function to count hyper/hypo DMRs per chromosome
+count_directional_dmrs <- function(gr_obj, treatment_name) {
+  df <- data.frame(
+    Treatment = treatment_name,
+    Chromosome = as.character(seqnames(gr_obj)),
+    logFC = mcols(gr_obj)$edgeR.logFC,
+    pval = mcols(gr_obj)$edgeR.p.value,
+    stringsAsFactors = FALSE
+  ) %>%
+    filter(pval < 0.05) %>%
+    mutate(Direction = ifelse(logFC > 0, "Hypermethylated", "Hypomethylated")) %>%
+    count(Treatment, Chromosome, Direction, name = "DMR_Count")
+  return(df)
+}
+
+# Step 3: Apply function and combine results
+dmr_directional_counts <- bind_rows(
+  lapply(names(dmr_granges), function(name) {
+    count_directional_dmrs(dmr_granges[[name]], name)
+  })
+)
+
+# Step 4: View result
+print(dmr_directional_counts)
+
+# Step 5 (Optional): Save to file
+write.csv(dmr_directional_counts, "DMR_HyperHypo_perChromosome.csv", row.names = FALSE)
+
+```
+
+
+Export Data
+```{r, eval=FALSE}
+# Save significant results
+write.table(as.data.frame(resSW_ES), "resSW_ES.txt", sep="\t", col.names=TRUE, row.names=FALSE)
+write.table(as.data.frame(resSW_OS), "resSW_OS.txt", sep="\t", col.names=TRUE, row.names=FALSE)
+
+```
+
+
+new bar plot 0.05
+```{r}
+# Save intra-aging plot as TIFF
+# ggsave("Intra_Aging_Barplot1.tiff", plot = inter_plot, width = 8.27, height = 11.69, units = "in", dpi = 600)
+
+# INTRA-AGING BAR PLOT
+
+# Create data frame for intra-aging methylation counts
+intra_methylation_counts <- tibble::tibble(
+  Group = factor(c("YS vs YC", "YS vs YC", "AS vs AC", "AS vs AC", "YE vs YC", "YE vs YC", "AE vs AC", "AE vs AC"),
+                 levels = c("YS vs YC", "AS vs AC", "YE vs YC", "AE vs AC")),
+  Methylation = rep(c("Hypermethylation", "Hypomethylation"), times = 4),
+  Count = c(42, 3, 66, 0, 32, 5,21, 1)
+)
+
+# Create intra-aging bar plot
+intra_plot <- ggplot(intra_methylation_counts, aes(x = Group, y = Count, fill = Methylation)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  labs(title = "(p <0.05)", y = "Number of DMRs") +
+  scale_fill_manual(values = c("Hypermethylation" = "#D73027", "Hypomethylation" = "#4575B4"), name = "") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 16, hjust = 0.5, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+    panel.grid.major = element_blank(),
+    axis.line = element_line(color = "black"), axis.line.x.bottom = element_blank(), axis.line.y = element_line(color = "black", size = 1)
+  )
+
+# Save intra-aging plot as TIFF
+# ggsave("Intra_Aging_Barplot1.tiff", plot = intra_plot, width = 8.27, height = 11.69, units = "in", dpi = 600)
+ggsave("Intra_Aging_Barplot.pdf", plot = intra_plot, width = 8.27, height = 11.69, units = "in", dpi = 600)
+
+# End of Script
+
+```
+
+reorder bar plot 0,05
+```{r}
+library(ggplot2)
+library(tibble)
+
+# Updated methylation order: Hypomethylation first
+intra_methylation_counts <- tibble(
+  Group = factor(c("YS vs YC", "YS vs YC", "AS vs AC", "AS vs AC", "YE vs YC", "YE vs YC", "AE vs AC", "AE vs AC"),
+                 levels = c("YS vs YC", "AS vs AC", "YE vs YC", "AE vs AC")),
+  Methylation = factor(rep(c("Hypomethylation", "Hypermethylation"), times = 4),
+                       levels = c("Hypomethylation", "Hypermethylation")),
+  Count = c(3, 42, 0, 66, 5, 32, 1, 21)
+)
+
+# Create intra-aging bar plot
+intra_plot <- ggplot(intra_methylation_counts, aes(x = Group, y = Count, fill = Methylation)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  labs(title = "(p <0.05)", y = "Number of DMRs") +
+  scale_fill_manual(values = c("Hypermethylation" = "#D73027", "Hypomethylation" = "#4575B4"), name = "") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 16, hjust = 0.5, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+    panel.grid.major = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.line.x.bottom = element_blank(),
+    axis.line.y = element_line(color = "black", size = 1)
+  )
+
+# Save plot if needed
+ggsave("Intra_Aging_Barplot_reorder.pdf", plot = intra_plot, width = 8.27, height = 11.69, units = "in", dpi = 600)
+
+```
+
+
+#Venn Diagram for DMR Overlap
+
+venn diagram with p value < 0.01
+
+```{r}
+# Load necessary libraries
+library(ChIPpeakAnno)
+
+# Ensure that each variable exists and is properly formatted
+GR_SW_Early_S_ROI_p.01 <- subset(GR_SW_Early_S_ROI, edgeR.p.value < 0.01)
+GR_SW_Early_E_ROI_p.01 <- subset(GR_SW_Early_E_ROI, edgeR.p.value < 0.01)
+GR_SW_Old_S_ROI_p.01 <- subset(GR_SW_Old_S_ROI, edgeR.p.value < 0.01)
+GR_SW_Old_E_ROI_p.01 <- subset(GR_SW_Old_E_ROI, edgeR.p.value < 0.01)
+
+# Create a named list of GRanges objects
+# dev.new()
+grl_01 <- list(
+  YS.vs.YC = GR_SW_Early_S_ROI_p.01,
+  AS.vs.AC = GR_SW_Old_S_ROI_p.01,
+  YE.vs.YC = GR_SW_Early_E_ROI_p.01,
+  AE.vs.AC = GR_SW_Old_E_ROI_p.01
+)
+# grl_01 <- list(
+#   AS.vs.AC = GR_SW_Old_S_ROI_p.01,
+#   AE.vs.AC = GR_SW_Old_E_ROI_p.01,
+#   YS.vs.CS = GR_SW_Early_S_ROI_p.01,
+#   YE.vs.CE = GR_SW_Early_E_ROI_p.01
+# 
+# )
+
+
+# Generate Venn diagram
+# jpeg("Venn_diagram_Intra_Age_0.01_rearrenge.jpeg", width = 10, height = 10, units = "in", res = 300)
+pdf("Venn_diagram_Intra_Age_0.01_rearranged.pdf", width = 10, height = 10)  # size in inches
+
+makeVennDiagram(Peaks = grl_01, 
+                NameOfPeaks = names(grl_01), 
+                main = expression(bold("( p ??? 0.01)")),  # Use expression and bold for a larger, bold title
+                col = "black", 
+                # fill = c("red", "blue", "yellow", "green"),
+                fill = c( "#4B0082","#9370DB","darkgreen", "green"), 
+
+                alpha = 0.50, cex = 2, cat.cex = 2.5, cex.main = 5)
+dev.off()
+# Save ggplot to PDF
+
+```
+#another color for venn 
+```{r}
+# Ensure that each variable exists and is properly formatted
+resSW_ES01 <- GR_SW_Early_S_ROI_p.01
+resSW_EE01 <- GR_SW_Early_E_ROI_p.01
+resSW_OS01 <- GR_SW_Old_S_ROI_p.01
+resSW_OE01 <- GR_SW_Old_E_ROI_p.01
+resbind01 <- c(resSW_ES01, resSW_EE01, resSW_OS01, resSW_OE01)
+dev.new()  # Open a new graphics device (optional, for some systems)
+
+grl <- splitAsList(resbind01, resbind01$Test)
+jpeg("Venn_diagram_Intra_Age_0.01.jpeg", width = 8, height = 8, units = "in", res = 300)
+
+makeVennDiagram(Peaks = grl, 
+                NameOfPeaks = names(grl), 
+                main = " Intra_Age (DMR p<0.01)",
+                col = "black", 
+                fill = c("darkgreen", "#4B0082", "green", "#9370DB"), 
+                alpha = 0.50, cex = 2)
+dev.off()
+
+```
+
+
+
+#KEGG Pathway Analysis Visualization --> -->
+```{r}
+# Example KEGG results data
+data <- data.frame(
+  pathwayName = c("Pyrimidine Metabolism", "Drug Metabolism - Other Enzymes"),
+  obv_links = c(15, 15),
+  exp_mean = c(3.4185, 4.3235),
+  p_value = c(0.0000013, 0.0000202)
+)
+
+# Transform p-values for visualization
+data$log_pval <- -log10(data$p_value)
+
+# Bar plot for pathways
+ggplot(data, aes(x = reorder(pathwayName, -log_pval), y = log_pval)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Significant Pathways",
+    x = "Pathway Name",
+    y = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+# Create data manually
+data <- data.frame(
+  pathwayName = c("Pyrimidine Metabolism", "Drug Metabolism - Other Enzymes"),
+  obv_links = c(15, 15),
+  exp_mean = c(3.4185, 4.3235),
+  p_value = c(0.0000013, 0.0000202),
+  FWER = c(0.0001944, 0.0030293),
+  q_value = c(0.0001944, 0.0015146)
+)
+data$log_pval <- -log10(data$p_value)
+
+# Dot plot to visualize observed links and significance
+ggplot(data, aes(x = pathwayName, y = obv_links, size = exp_mean, color = log_pval)) +
+  geom_point() +
+  coord_flip() +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(
+    title = "Pathway Analysis Results",
+    x = "Pathway Name",
+    y = "Observed Links",
+    size = "Expected Mean",
+    color = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+
+Heatmap #stress with the p value of 0.01
+
+```{r}
+library(readxl)
+library(pheatmap)
+# Step 1: Set working directory
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/inta age")
+
+# Step 2: Load normalized counts data
+load(file = "main.counts.final.cpm.tmm.normalized.rda")
+main_counts <- counts.final.cpm.tmm.normalized
+
+load(file = "unique.counts.final.cpm.tmm.normalized.rda")
+unique_counts <- counts.final.cpm.tmm.normalized
+
+# load(file = "multi.counts.final.cpm.tmm.normalized.rda")
+# multi_counts <- counts.final.cpm.tmm.normalized
+# Step 3: Combine the datasets
+combined_counts <- rbind(main_counts, unique_counts, multi_counts)
+combined_counts_df <- as.data.frame(combined_counts)
+write_xlsx(combined_counts_df, "combined_counts_df.xlsx")
+
+# Step 4: Read DMR data from the Excel file
+#stress
+# dmr_data_ES <- read_excel("Unique_DMRs_pvalue 0.01.xlsx", sheet = "YS")
+# dmr_data_OS <- read_excel("Unique_DMRs_pvalue 0.01.xlsx", sheet = "AS")
+dmr_data_ES <- read_excel("Filtered_PeakAnno_p0.01_all.xlsx", sheet = "YS vs YC")
+dmr_data_OS <- read_excel("Filtered_PeakAnno_p0.01_all.xlsx", sheet = "AS vs AC")
+
+dmr_data_OS <- dmr_data_OS %>%
+  mutate(location = paste0(seqnames, ":", start, "-", end))
+dmr_data_ES <- dmr_data_ES %>%
+  mutate(location = paste0(seqnames, ":", start, "-", end))
+
+# Step 6: Combine the DMR datasets
+dmr_data <- bind_rows(dmr_data_OS, dmr_data_ES)
+
+# Step 7: Extract the 'location' vector from the DMR data
+dmr_locations <- dmr_data$location
+
+# Step 8: Filter combined_counts for overlapping locations
+overlap_counts <- combined_counts[combined_counts$location %in% dmr_locations, ]
+
+# Step 9: Set row names as the 'location' column
+# rownames(overlap_counts) <- overlap_counts$location
+# Step 9: Set unique row names as the 'location' column
+rownames(overlap_counts) <- make.unique(as.character(overlap_counts$location))
+
+# Step 10: Extract the counts matrix (excluding non-numeric columns)
+counts_matrix <- as.matrix(overlap_counts[, -c(1:9)])  # Adjust column indices as needed
+
+counts_matrix_Enrich0.01 <- as.data.frame(scaled_counts_matrix)
+write_xlsx(counts_matrix_Enrich0.01, "counts_matrix_Enrich0.01.xlsx")
+
+
+# Step 11: Create groups based on column names
+sample_names <- colnames(counts_matrix)
+groups <- case_when(
+  grepl("earlystress_.*_S", sample_names) ~ "YS",
+  grepl("earlystress_.*_C", sample_names) ~ "YC",
+  grepl("chicken_.*_S", sample_names) ~ "AS",
+  grepl("chicken_.*_C", sample_names) ~ "AC",
+  TRUE ~ "Other"
+)
+
+# Step 12: Filter and reorder for only selected groups
+annotation_col <- data.frame(Group = factor(groups, levels = c("YS", "AS", "YC", "AC")))
+rownames(annotation_col) <- sample_names
+valid_samples <- rownames(annotation_col)[annotation_col$Group %in% c("YS", "AS", "YC", "AC")]
+
+# Reorder columns to match the desired order
+ordered_columns <- valid_samples[order(match(annotation_col[valid_samples, "Group"], c("YS", "AS", "YC", "AC")))]
+
+# Subset and reorder the counts matrix
+counts_matrix <- counts_matrix[, ordered_columns]
+annotation_col <- annotation_col[ordered_columns, , drop = FALSE]
+
+# Step 13: Calculate z-scores for scaling
+
+# scaled_counts_matrix <- t(apply(counts_matrix, 1, function(row) {
+#   z_scores <- (row - mean(row)) / sd(row)
+#   z_scores + abs(min(z_scores))  # Shift to make all values non-negative
+# }))
+scaled_counts_matrix <- t(apply(counts_matrix, 1, function(row) {
+  sd_row <- sd(row)
+  if (sd_row == 0 || is.na(sd_row)) {
+    rep(0, length(row))  # or row - mean(row), if you want to preserve small differences
+  } else {
+    z_scores <- (row - mean(row)) / sd_row
+    z_scores + abs(min(z_scores))  # optional shift
+  }
+}))
+
+
+# Step 14: Order rows for the heatmap
+es_rows <- intersect(rownames(scaled_counts_matrix), dmr_data_ES$location)
+os_rows <- intersect(rownames(scaled_counts_matrix), dmr_data_OS$location)
+ordered_row_names <- c(es_rows, os_rows)
+scaled_counts_matrix <- scaled_counts_matrix[ordered_row_names, , drop = FALSE]
+
+# Step 15: Create row annotations based on DMR source
+# row_annotation <- data.frame(
+#   Source = ifelse(rownames(scaled_counts_matrix) %in% dmr_data_ES$location, "YS vs YC", "AS vs AC")
+# )
+
+# Step 15: Create row annotations based on DMR source
+row_annotation <- data.frame(
+  Source = factor(ifelse(rownames(scaled_counts_matrix) %in% dmr_data_ES$location, 
+                         "YS vs YC", "AS vs AC"),
+                  levels = c("YS vs YC", "AS vs AC"))  # Set explicit order
+)
+rownames(row_annotation) <- rownames(scaled_counts_matrix)
+
+
+color_palette <- colorRampPalette(c("white", "red"))(100)
+
+# Define custom annotation colors
+annotation_colors <- list(
+  Group = c(
+    "YS" = "#4B0082",
+    "AS" = "#9370DB",
+    "YC" = "#FFD700",  # Dark yellow
+    "AC" = "#f5f5dc"
+  ),
+    Source = c(
+    "YS vs YC" = "lightblue",    # Change this to your preferred color
+    "AS vs AC" = "darkblue"   # Change this to your preferred color
+  )
+)
+
+# Save the heatmap as a JPEG
+# jpeg("Stress_0.01_heatmap_intra_age.jpeg", width = 20, height = 6, units = "in", res = 300)
+# jpeg("C:/Users/farso212/Desktop/Isolation paper/Stress_Unique_DMRs_Heatmap_Intra_Age_0.01_rename.jpeg", 
+# width = 20, height = 4, units = "in", res = 300)
+
+# Generate the heatmap
+pheatmap(
+  scaled_counts_matrix,
+  cluster_rows = FALSE,         # Keep specified row order
+  cluster_cols = FALSE,         # Keep specified column order
+  annotation_col = annotation_col,  # Column annotations
+  annotation_row = row_annotation,  # Row annotations
+  show_rownames = TRUE,         # Show row names (e.g., DMR locations)
+  show_colnames = FALSE,        # Hide column names
+  # main = "Stress Unique DMRs Across Individuals (p-value <0.01)",
+  color = color_palette,        # Apply red-white color palette
+  annotation_colors = annotation_colors,  # Apply custom annotation colors
+  fontsize_row = 15,            # Adjust font size for rows
+  fontsize_col = 6,             # Adjust font size for columns
+  border_color = NA             # Remove gridlines between cells
+)
+
+# Close the graphic device
+# dev.off()
+
+# Convert the scaled matrix to a data frame for export
+scaled_counts_df <- as.data.frame(scaled_counts_matrix)
+
+# Add rownames as a column to preserve DMR locations
+scaled_counts_df <- tibble::rownames_to_column(scaled_counts_df, var = "location")
+
+# Save to Excel
+library(writexl)
+write_xlsx(scaled_counts_df, "scaled_counts_matrix_Stress0.01.xlsx")
+
+```
+#dynamic #stress
+```{r}
+# Step 1: Extract DMR locations for each comparison
+ys_dmr_locs <- dmr_data_ES$location  # YS vs YC
+as_dmr_locs <- dmr_data_OS$location  # AS vs AC
+
+# Step 2: Function to compute group-wise average methylation
+get_group_means <- function(locations, counts_matrix, annotation_col) {
+  sub_matrix <- counts_matrix[rownames(counts_matrix) %in% locations, , drop = FALSE]
+  col_groups <- annotation_col[colnames(sub_matrix), , drop = FALSE]
+  
+  means <- sapply(c("YS", "AS", "YC", "AC"), function(group) {
+    group_cols <- rownames(col_groups[col_groups$Group == group, , drop = FALSE])
+    if (length(group_cols) < 1) return(NA)
+    rowMeans(sub_matrix[, group_cols, drop = FALSE], na.rm = TRUE)
+  })
+  
+  if (is.null(dim(means))) {
+    return(setNames(mean(means, na.rm = TRUE), names(means)))
+  } else {
+    return(colMeans(means, na.rm = TRUE))
+  }
+}
+
+# Step 3: Compute group averages for each DMR source
+ys_means <- get_group_means(ys_dmr_locs, counts_matrix, annotation_col)
+as_means <- get_group_means(as_dmr_locs, counts_matrix, annotation_col)
+
+# Step 4: Create data frame for bar plot
+bar_data <- data.frame(
+  Group = rep(c("YS", "AS", "YC", "AC"), 2),
+  Methylation = c(ys_means, as_means),
+  DMR_Source = rep(c("YS vs YC", "AS vs AC"), each = 4)
+)
+
+# Step 5: Generate the bar plot
+library(ggplot2)
+
+ggplot(bar_data, aes(x = Group, y = Methylation, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7, na.rm = TRUE) +
+  facet_wrap(~DMR_Source) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Average Methylation Dynamics per Group (Stress DMRs)",
+    y = "Average Normalized Count",
+    x = "Group"
+  ) +
+  scale_fill_manual(values = c("YS" = "#4B0082", "AS" = "#9370DB", "YC" = "#FFD700", "AC" = "#f5f5dc")) +
+  theme(strip.text = element_text(size = 16, face = "bold"))
+
+# Optional: Save the plot
+ggsave("Stress_Methylation_Dynamics_Barplot_stress.jpeg", width = 10, height = 6, units = "in", dpi = 300)
+# Install writexl if needed
+# install.packages("writexl")
+library(writexl)
+
+# Save the group-wise averages to Excel
+# write_xlsx(bar_data, "Stress_Methylation_Dynamics_Averages.xlsx")
+
+
+```
+
+
+
+
+
+
+
+
+#Follow up stat test for stress group #biomarker###t-test
+
+```{r}
+# Split sample columns by group
+ys_cols <- colnames(counts_matrix)[annotation_col$Group == "YS"]
+as_cols <- colnames(counts_matrix)[annotation_col$Group == "AS"]
+yc_cols <- colnames(counts_matrix)[annotation_col$Group == "YC"]
+ac_cols <- colnames(counts_matrix)[annotation_col$Group == "AC"]
+
+# Function to perform row-wise t-tests
+t_test_results <- apply(counts_matrix, 1, function(row) {
+  ys_values <- as.numeric(row[ys_cols])
+  as_values <- as.numeric(row[as_cols])
+  yc_values <- as.numeric(row[yc_cols])
+  ac_values <- as.numeric(row[ac_cols])
+  
+  # Handle cases with zero variance or too few samples
+  if (length(unique(ys_values)) <= 1 || length(unique(as_values)) <= 1 ||
+      length(unique(yc_values)) <= 1 || length(unique(ac_values)) <= 1) {
+    return(c(NA, NA))  # Avoid errors in t-test
+  }
+  
+  # Perform t-tests
+  test_ys_as <- tryCatch(t.test(ys_values, as_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  test_ys_yc <- tryCatch(t.test(ys_values, yc_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  test_as_ac <- tryCatch(t.test(as_values, ac_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  
+  return(c(test_ys_as, min(test_ys_yc, test_as_ac)))  # Use minimum of both comparisons for significance
+})
+
+# Convert results to a data frame
+t_test_df <- as.data.frame(t(t_test_results))
+colnames(t_test_df) <- c("p_YS_vs_AS", "min_p_YSvsYC_or_ASvsAC")
+t_test_df$location <- rownames(counts_matrix)
+
+# Merge with row annotations (optional)
+final_results <- cbind(t_test_df, row_annotation[rownames(t_test_df), , drop = FALSE])
+
+# Mark desired cases
+final_results$Category <- case_when(
+  final_results$p_YS_vs_AS > 0.05 & final_results$min_p_YSvsYC_or_ASvsAC < 0.05 ~ "Desired",
+  TRUE ~ "Other"
+)
+
+# Filter to see "good" candidates
+desired_rows <- final_results[final_results$Category == "Desired", ]
+
+# View selected rows
+head(desired_rows)
+
+# Optional: save to Excel
+library(writexl)
+write_xlsx(final_results, "rowwise_t_test_results.xlsx")
+# Add interpretation columns for each comparison
+final_results$Significance_YS_vs_AS <- ifelse(final_results$p_YS_vs_AS < 0.05, "Significant", "Not Significant")
+final_results$Significance_YSvsYC_or_ASvsAC <- ifelse(final_results$min_p_YSvsYC_or_ASvsAC < 0.05, "Significant", "Not Significant")
+
+# Optionally, summarize combined logic
+final_results$Summary_Category <- case_when(
+  final_results$Significance_YS_vs_AS == "Not Significant" &
+    final_results$Significance_YSvsYC_or_ASvsAC == "Significant" ~ "DMR Passed Criteria",
+  TRUE ~ "Other"
+)
+# Save everything to Excel
+write_xlsx(final_results, "Stress_DMR_T_test_significance_results.xlsx")
+
+###############permutation 
+
+# Define the permutation equivalence test
+# permutation_equivalence_test <- function(group1, group2, delta = 0.5, n_perm = 1000, seed = 42) {
+#   set.seed(seed)
+#   observed_diff <- abs(median(group1) - median(group2))
+#   combined <- c(group1, group2)
+#   n1 <- length(group1)
+#   
+#   perm_diffs <- replicate(n_perm, {
+#     permuted <- sample(combined)
+#     abs(median(permuted[1:n1]) - median(permuted[(n1 + 1):length(combined)]))
+#   })
+#   
+#   p_value <- mean(perm_diffs >= delta)
+#   return(p_value)
+# }
+# 
+# # Run permutation equivalence test row-wise
+# perm_eq_results <- apply(counts_matrix, 1, function(row) {
+#   ys_values <- as.numeric(row[ys_cols])
+#   as_values <- as.numeric(row[as_cols])
+#   yc_values <- as.numeric(row[yc_cols])
+#   ac_values <- as.numeric(row[ac_cols])
+#   
+#   # Skip rows with insufficient variation
+#   if (length(unique(ys_values)) <= 1 || length(unique(as_values)) <= 1 ||
+#       length(unique(yc_values)) <= 1 || length(unique(ac_values)) <= 1) {
+#     return(c(NA, NA))
+#   }
+#   
+#   # Equivalence test on YS vs AS
+#   eq_p <- permutation_equivalence_test(ys_values, as_values, delta = 0.5, n_perm = 1000)
+#   
+#   # Control check: is either treatment different from its control?
+#   test_ys_yc <- tryCatch(t.test(ys_values, yc_values)$p.value, error = function(e) NA)
+#   test_as_ac <- tryCatch(t.test(as_values, ac_values)$p.value, error = function(e) NA)
+#   
+#   return(c(eq_p, min(test_ys_yc, test_as_ac)))
+# })
+# 
+# # Format results
+# perm_df <- as.data.frame(t(perm_eq_results))
+# colnames(perm_df) <- c("Permutation_p_equivalence", "min_p_YSvsYC_or_ASvsAC")
+# perm_df$location <- rownames(counts_matrix)
+# 
+# # Combine with annotations
+# final_results_perm <- cbind(perm_df, row_annotation[rownames(perm_df), , drop = FALSE])
+# 
+# # Annotate based on logic
+# final_results_perm$Equivalence_YS_vs_AS <- ifelse(final_results_perm$Permutation_p_equivalence < 0.05, "Equivalent", "Not Equivalent")
+# final_results_perm$Significance_YSvsYC_or_ASvsAC <- ifelse(final_results_perm$min_p_YSvsYC_or_ASvsAC < 0.05, "Significant", "Not Significant")
+# 
+# # Mark reliable DMRs
+# final_results_perm$Summary_Category <- case_when(
+#   final_results_perm$Equivalence_YS_vs_AS == "Equivalent" & 
+#     final_results_perm$Significance_YSvsYC_or_ASvsAC == "Significant" ~ "DMR Passed Criteria",
+#   TRUE ~ "Other"
+# )
+# 
+# # Optional: save
+# library(writexl)
+# write_xlsx(final_results_perm, "Stress_DMR_Permutation_Equivalence_Results.xlsx")
+# 
+
+
+```
+```{r}
+# Filter for DMRs that meet your criteria
+desired_dmrs <- final_results %>%
+  filter(Significance_YS_vs_AS == "Not Significant" &
+           Significance_YSvsYC_or_ASvsAC == "Significant")
+
+# Extract only those rows for heatmap
+filtered_counts_matrix <- counts_matrix[desired_dmrs$location, , drop = FALSE]
+
+# Recalculate z-score scaling
+filtered_scaled_matrix <- t(apply(filtered_counts_matrix, 1, function(row) {
+  sd_row <- sd(row)
+  if (sd_row == 0 || is.na(sd_row)) {
+    rep(0, length(row))
+  } else {
+    (row - mean(row)) / sd_row + abs(min((row - mean(row)) / sd_row))
+  }
+}))
+
+# Add significance labels from the results
+filtered_row_annotation <- data.frame(
+  `YS_vs_AS` = desired_dmrs$Significance_YS_vs_AS,
+  `Diff_vs_Control` = desired_dmrs$Significance_YSvsYC_or_ASvsAC
+)
+rownames(filtered_row_annotation) <- desired_dmrs$location
+# Column annotation remains the same
+filtered_annotation_col <- annotation_col[colnames(filtered_scaled_matrix), , drop = FALSE]
+
+# Define annotation colors if not already defined
+annotation_colors <- list(
+  Group = c("YS" = "#4B0082", "AS" = "#9370DB", "YC" = "#FFD700", "AC" = "#f5f5dc"),
+  YS_vs_AS = c("Significant" = "red", "Not Significant" = "green"),
+  Diff_vs_Control = c("Significant" = "blue", "Not Significant" = "gray")
+)
+
+library(pheatmap)
+
+pheatmap(
+  filtered_scaled_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  annotation_col = filtered_annotation_col,
+  annotation_row = filtered_row_annotation,
+  show_rownames = TRUE,
+  show_colnames = FALSE,
+  color = colorRampPalette(c("white", "red"))(100),
+  annotation_colors = annotation_colors,
+  fontsize_row = 10,
+  fontsize_col = 6,
+  border_color = NA,
+  main = "Filtered DMRs: Stable Between Stress Groups, Differs from Controls"
+)
+
+
+```
+## #Follow up stat manwhitney for stress group #biomarker####
+
+```{r}
+# Split sample columns by group
+ys_cols <- colnames(counts_matrix)[annotation_col$Group == "YS"]
+as_cols <- colnames(counts_matrix)[annotation_col$Group == "AS"]
+yc_cols <- colnames(counts_matrix)[annotation_col$Group == "YC"]
+ac_cols <- colnames(counts_matrix)[annotation_col$Group == "AC"]
+
+# Function to perform row-wise Mann-Whitney U tests
+mw_test_results <- apply(counts_matrix, 1, function(row) {
+  ys_values <- as.numeric(row[ys_cols])
+  as_values <- as.numeric(row[as_cols])
+  yc_values <- as.numeric(row[yc_cols])
+  ac_values <- as.numeric(row[ac_cols])
+  
+  # Handle cases with too few unique values
+  if (length(unique(ys_values)) <= 1 || length(unique(as_values)) <= 1 ||
+      length(unique(yc_values)) <= 1 || length(unique(ac_values)) <= 1) {
+    return(c(NA, NA))  # Avoid errors
+  }
+  
+  # Perform Wilcoxon rank-sum tests (Mann-Whitney U)
+  test_ys_as <- tryCatch(wilcox.test(ys_values, as_values)$p.value, error = function(e) NA)
+  test_ys_yc <- tryCatch(wilcox.test(ys_values, yc_values)$p.value, error = function(e) NA)
+  test_as_ac <- tryCatch(wilcox.test(as_values, ac_values)$p.value, error = function(e) NA)
+  
+  return(c(test_ys_as, min(test_ys_yc, test_as_ac)))  # Use minimum of comparisons to control for control difference
+})
+
+# Convert results to data frame
+mw_test_df <- as.data.frame(t(mw_test_results))
+colnames(mw_test_df) <- c("p_YS_vs_AS", "min_p_YSvsYC_or_ASvsAC")
+mw_test_df$location <- rownames(counts_matrix)
+
+# Merge with row annotations (optional)
+final_results <- cbind(mw_test_df, row_annotation[rownames(mw_test_df), , drop = FALSE])
+
+# Mark desired cases
+final_results$Category <- case_when(
+  final_results$p_YS_vs_AS > 0.05 & final_results$min_p_YSvsYC_or_ASvsAC < 0.05 ~ "Desired",
+  TRUE ~ "Other"
+)
+
+# Add interpretation columns
+final_results$Significance_YS_vs_AS <- ifelse(final_results$p_YS_vs_AS < 0.05, "Significant", "Not Significant")
+final_results$Significance_YSvsYC_or_ASvsAC <- ifelse(final_results$min_p_YSvsYC_or_ASvsAC < 0.05, "Significant", "Not Significant")
+
+# Summary of logic
+final_results$Summary_Category <- case_when(
+  final_results$Significance_YS_vs_AS == "Not Significant" &
+    final_results$Significance_YSvsYC_or_ASvsAC == "Significant" ~ "DMR Passed Criteria",
+  TRUE ~ "Other"
+)
+
+# View filtered results
+desired_rows <- final_results[final_results$Summary_Category == "DMR Passed Criteria", ]
+head(desired_rows)
+
+# Save to Excel
+# library(writexl)
+# write_xlsx(final_results, "Stress_DMR_MannWhitney_significance_results.xlsx")
+
+```
+#TOSTER Stress working#
+
+```{r}
+
+# Define your equivalence threshold (adjust as appropriate)
+delta <- 0.5
+
+# Get sample columns for YS and AS
+ys_cols <- colnames(counts_matrix)[annotation_col$Group == "YS"]
+as_cols <- colnames(counts_matrix)[annotation_col$Group == "AS"]
+
+# Apply TOST row-wise (updated to select only the combined TOST p-value)
+tost_results_ys_as <- apply(counts_matrix, 1, function(row) {
+  ys_values <- as.numeric(row[ys_cols])
+  as_values <- as.numeric(row[as_cols])
+  
+  if (length(ys_values) < 2 || length(as_values) < 2) return(NA)
+  
+  tryCatch({
+    test <- tsum_TOST(
+      m1 = mean(ys_values),
+      m2 = mean(as_values),
+      sd1 = sd(ys_values),
+      sd2 = sd(as_values),
+      n1 = length(ys_values),
+      n2 = length(as_values),
+      low_eqbound = -delta,
+      high_eqbound = delta,
+      alpha = 0.05,
+      var.equal = FALSE
+    )
+    test$TOST$p.value[3]  # ??? Use the third (overall) p-value only
+  }, error = function(e) NA)
+})
+
+# Clean names
+clean_names <- gsub("\\.\\d+$", "", names(tost_results_ys_as))
+names(tost_results_ys_as) <- clean_names
+
+# Attach only matched p-values
+final_results$TOST_p_equivalence <- NA
+matched_indices <- match(final_results$location, names(tost_results_ys_as))
+final_results$TOST_p_equivalence[!is.na(matched_indices)] <- tost_results_ys_as[matched_indices[!is.na(matched_indices)]]
+
+# Check results
+summary(final_results$TOST_p_equivalence)
+
+names(tost_results_ys_as) <- rownames(counts_matrix)
+
+# Attach equivalence p-values safely
+
+# Remove the `.1`, `.2` etc. from names(tost_results_ys_as)
+# Step 1: Clean names (remove .1, .2 from rownames of tost results)
+clean_names <- gsub("\\.\\d+$", "", names(tost_results_ys_as))
+
+# Step 2: Assign cleaned names to tost_results
+names(tost_results_ys_as) <- clean_names
+
+# Step 3: Now match exactly
+matching_pvals <- tost_results_ys_as[match(final_results$location, names(tost_results_ys_as))]
+
+# Step 4: Ensure exact same length before assigning
+stopifnot(length(matching_pvals) == nrow(final_results))
+
+# Step 5: Add to final_results
+final_results$TOST_p_equivalence <- unlist(matching_pvals)
+
+
+
+# Mark equivalence status
+final_results$Equivalence_YS_vs_AS <- ifelse(final_results$TOST_p_equivalence < 0.05, "Equivalent", "Not Equivalent")
+
+# Filter equivalent DMRs
+equivalent_dmrs <- final_results[final_results$Equivalence_YS_vs_AS == "Equivalent", ]
+
+# Save to Excel
+write_xlsx(final_results, "TOST_Equivalence_YS_AS_results.xlsx")
+
+```
+TOST stress 2nd try
+
+```{r}
+# # Load TOSTER library
+# library(TOSTER)
+# 
+# # Define equivalence threshold
+# delta <- 0.5  # Adjust based on your biological definition of "no meaningful difference"
+# alpha <- 0.05
+# 
+# # Get sample columns for YS and AS
+# ys_cols <- colnames(counts_matrix)[annotation_col$Group == "YS"]
+# as_cols <- colnames(counts_matrix)[annotation_col$Group == "AS"]
+# 
+# # Step 1: Run TOST row-wise
+# tost_results_ys_as <- apply(counts_matrix, 1, function(row) {
+#   ys_values <- as.numeric(row[ys_cols])
+#   as_values <- as.numeric(row[as_cols])
+#   
+#   if (length(ys_values) < 2 || length(as_values) < 2) return(NA)
+#   
+#   tryCatch({
+#     test <- tsum_TOST(
+#       m1 = mean(ys_values),
+#       m2 = mean(as_values),
+#       sd1 = sd(ys_values),
+#       sd2 = sd(as_values),
+#       n1 = length(ys_values),
+#       n2 = length(as_values),
+#       low_eqbound = -delta,
+#       high_eqbound = delta,
+#       alpha = alpha,
+#       var.equal = FALSE
+#     )
+#     test$TOST$p.value[3]  # Use the combined (overall) p-value
+#   }, error = function(e) NA)
+# })
+# 
+# # Step 2: Clean up names to ensure match with `final_results$location`
+# clean_names <- gsub("\\.\\d+$", "", names(tost_results_ys_as))
+# names(tost_results_ys_as) <- clean_names
+# 
+# # Step 3: Attach TOST p-values to your final_results table
+# final_results$TOST_p_equivalence <- NA
+# matched_indices <- match(final_results$location, names(tost_results_ys_as))
+# final_results$TOST_p_equivalence[!is.na(matched_indices)] <- tost_results_ys_as[matched_indices[!is.na(matched_indices)]]
+# 
+# # Step 4: Annotate equivalence
+# final_results$Equivalence_YS_vs_AS <- ifelse(
+#   final_results$TOST_p_equivalence < alpha,
+#   "Equivalent",
+#   "Not Equivalent"
+# )
+# 
+# # Optional: View summary
+# summary(final_results$TOST_p_equivalence)
+# table(final_results$Equivalence_YS_vs_AS)
+# write_xlsx(final_results, "TOST_Equivalence_YS_AS_results2.xlsx")
+
+```
+
+
+heatmap of enrich with p < 0.01 and correct labels
+```{r}
+
+library(dplyr)
+library(pheatmap)
+library(readxl)
+library(viridis)
+library(viridisLite)
+
+# Step 1: Set working directory
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/inta age")
+
+# Step 2: Load normalized counts data
+load(file = "main.counts.final.cpm.tmm.normalized.rda")
+main_counts <- counts.final.cpm.tmm.normalized
+
+load(file = "unique.counts.final.cpm.tmm.normalized.rda")
+unique_counts <- counts.final.cpm.tmm.normalized
+
+
+
+# Step 3: Combine the datasets
+combined_counts <- rbind(main_counts, unique_counts)
+
+# Step 4: Read DMR data from the Excel file
+dmr_data_EE <- read_excel("Unique_DMRs_pvalue 0.01.xlsx", sheet = "YE")
+dmr_data_OE <- read_excel("Unique_DMRs_pvalue 0.01.xlsx", sheet = "AE")
+
+# Step 5: Create a 'location' column in each DMR dataset
+dmr_data_EE <- dmr_data_EE %>%
+  mutate(location = paste0(seqnames, ":", start, "-", end))
+dmr_data_OE <- dmr_data_OE %>%
+  mutate(location = paste0(seqnames, ":", start, "-", end))
+
+# Step 6: Combine the DMR datasets
+dmr_data <- bind_rows(dmr_data_EE, dmr_data_OE)
+
+# Step 7: Extract the 'location' vector from the DMR data
+dmr_locations <- dmr_data$location
+
+# Step 8: Filter combined_counts for overlapping locations
+overlap_counts <- combined_counts[combined_counts$location %in% dmr_locations, ]
+
+# Step 9: Set row names as the 'location' column
+rownames(overlap_counts) <- overlap_counts$location
+
+# Step 10: Extract the counts matrix (excluding non-numeric columns)
+counts_matrix <- as.matrix(overlap_counts[, -c(1:9)])  # Adjust column indices as needed
+
+# Step 11: Create groups based on column names
+sample_names <- colnames(counts_matrix)
+groups <- case_when(
+  grepl("earlystress_.*_E", sample_names) ~ "YE",
+  grepl("earlystress_.*_C", sample_names) ~ "YC",
+  grepl("chicken_.*_E", sample_names) ~ "AE",
+  grepl("chicken_.*_C", sample_names) ~ "AC",
+  TRUE ~ "Other"
+)
+
+# Step 12: Filter and reorder for only selected groups
+annotation_col <- data.frame(Group = factor(groups, levels = c("YE", "AE", "YC", "AC")))
+rownames(annotation_col) <- sample_names
+valid_samples <- rownames(annotation_col)[annotation_col$Group %in% c("YE", "AE", "YC", "AC")]
+
+# Reorder columns to match the desired order
+ordered_columns <- valid_samples[order(match(annotation_col[valid_samples, "Group"], c("YE", "AE", "YC", "AC")))]
+
+# Subset and reorder the counts matrix
+counts_matrix <- counts_matrix[, ordered_columns]
+annotation_col <- annotation_col[ordered_columns, , drop = FALSE]
+
+# Step 13: Calculate z-scores for scaling
+scaled_counts_matrix <- t(apply(counts_matrix, 1, function(row) {
+  z_scores <- (row - mean(row)) / sd(row)
+  z_scores + abs(min(z_scores))  # Shift to make all values non-negative
+}))
+
+# # Step 14-1: Remove problematic locations
+# problematic_rows <- c("chr33:4034216_4034771", "chrZ:77465838_12758176")
+# scaled_counts_matrix <- scaled_counts_matrix[!rownames(scaled_counts_matrix) %in% problematic_rows, , drop = FALSE]
+
+# Step 14: Order rows for the heatmap
+ee_rows <- intersect(rownames(scaled_counts_matrix), dmr_data_EE$location)
+oe_rows <- intersect(rownames(scaled_counts_matrix), dmr_data_OE$location)
+ordered_row_names <- c(ee_rows, oe_rows)
+scaled_counts_matrix <- scaled_counts_matrix[ordered_row_names, , drop = FALSE]
+
+# Step 15: Create row annotations based on DMR source
+# row_annotation <- data.frame(
+#   Source = ifelse(rownames(scaled_counts_matrix) %in% dmr_data_EE$location, "YE vs YC", "AE vs AC")
+# )
+
+row_annotation <- data.frame(
+  Source = factor(ifelse(rownames(scaled_counts_matrix) %in% dmr_data_EE$location, 
+                         "YE vs YC", "AE vs AC"),
+                  levels = c("YE vs YC", "AE vs AC"))  # Set explicit order
+)
+rownames(row_annotation) <- rownames(scaled_counts_matrix)
+
+
+#trial#
+color_palette <- colorRampPalette(c("white", "red"))(100)
+
+# Define custom annotation colors
+annotation_colors <- list(
+  Group = c(
+    "YE" = "darkgreen",
+    "AE" = "lightgreen",
+    "YC" = "#FFD700",  # Dark yellow
+    "AC" = "#f5f5dc"
+  ),
+  Source = c(
+    "YE vs YC" = "grey",    # Change this to your preferred color
+    "AE vs AC" = "grey11"   # Change this to your preferred color
+  )
+)
+
+# Save the heatmap as a JPEG
+# jpeg("Enrich_0.01_heatmap_intra_age.jpeg", width = 20, height = 6, units = "in", res = 300)
+# dev.new()
+# Generate the heatmap
+pheatmap(
+  scaled_counts_matrix,
+  cluster_rows = FALSE,         # Keep specified row order
+  cluster_cols = FALSE,         # Keep specified column order
+  annotation_col = annotation_col,  # Column annotations
+  annotation_row = row_annotation,  # Row annotations
+  show_rownames = TRUE,         # Show row names (e.g., DMR locations)
+  show_colnames = FALSE,        # Hide column names
+  # main = "Enrich Unique DMRs Across Individuals (p-value <0.01)",
+  color = color_palette,        # Apply red-white color palette
+  annotation_colors = annotation_colors,  # Apply custom annotation colors
+  fontsize_row = 15,            # Adjust font size for rows
+  fontsize_col = 6,             # Adjust font size for columns
+  border_color = NA             # Remove gridlines between cells
+)
+
+# Close the graphic device
+# dev.off()
+
+# Convert the scaled matrix to a data frame for export
+scaled_counts_df <- as.data.frame(scaled_counts_matrix)
+
+# Add rownames as a column to preserve DMR locations
+scaled_counts_df <- tibble::rownames_to_column(scaled_counts_df, var = "location")
+
+# Save to Excel
+library(writexl)
+write_xlsx(scaled_counts_df, "scaled_counts_matrix_Enrich0.01.xlsx")
+```
+
+#Follow up stat t-test for Enrich group #biomarker####
+
+```{r}
+# Split sample columns by group
+ye_cols <- colnames(counts_matrix)[annotation_col$Group == "YE"]
+ae_cols <- colnames(counts_matrix)[annotation_col$Group == "AE"]
+yc_cols <- colnames(counts_matrix)[annotation_col$Group == "YC"]
+ac_cols <- colnames(counts_matrix)[annotation_col$Group == "AC"]
+
+# Function to perform row-wise t-tests
+t_test_results <- apply(counts_matrix, 1, function(row) {
+  ye_values <- as.numeric(row[ye_cols])
+  ae_values <- as.numeric(row[ae_cols])
+  yc_values <- as.numeric(row[yc_cols])
+  ac_values <- as.numeric(row[ac_cols])
+  
+  # Handle cases with zero variance or too few samples
+  if (length(unique(ye_values)) <= 1 || length(unique(ae_values)) <= 1 ||
+      length(unique(yc_values)) <= 1 || length(unique(ac_values)) <= 1) {
+    return(c(NA, NA))  # Avoid errors in t-test
+  }
+  
+  # Perform t-tests
+  test_ye_ae <- tryCatch(t.test(ye_values, ae_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  test_ye_yc <- tryCatch(t.test(ye_values, yc_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  test_ae_ac <- tryCatch(t.test(ae_values, ac_values, var.equal = TRUE)$p.value, error = function(e) NA)
+  
+  return(c(test_ye_ae, min(test_ye_yc, test_ae_ac)))  # Use minimum of both comparisons for significance
+})
+
+# Convert results to a data frame
+t_test_df <- as.data.frame(t(t_test_results))
+colnames(t_test_df) <- c("p_YE_vs_AE", "min_p_YEvsYC_or_AEvsAC")
+t_test_df$location <- rownames(counts_matrix)
+
+# Merge with row annotations (optional)
+final_results <- cbind(t_test_df, row_annotation[rownames(t_test_df), , drop = FALSE])
+
+# Mark desired cases
+final_results$Category <- case_when(
+  final_results$p_YE_vs_AE > 0.05 & final_results$min_p_YEvsYC_or_AEvsAC < 0.05 ~ "Desired",
+  TRUE ~ "Other"
+)
+
+# Filter to see "good" candidates
+desired_rows <- final_results[final_results$Category == "Desired", ]
+
+# View selected rows
+head(desired_rows)
+
+# Optional: save to Excel
+library(writexl)
+# write_xlsx(final_results, "rowwise_t_test_results_Enrich.xlsx")
+# Add interpretation columns for each comparison
+final_results$Significance_YE_vs_AE <- ifelse(final_results$p_YE_vs_AE < 0.05, "Significant", "Not Significant")
+final_results$Significance_YEvsYC_or_AEvsAC <- ifelse(final_results$min_p_YEvsYC_or_AEvsAC < 0.05, "Significant", "Not Significant")
+
+# Optionally, summarize combined logic
+final_results$Summary_Category <- case_when(
+  final_results$Significance_YE_vs_AE == "Not Significant" &
+    final_results$Significance_YEvsYC_or_AEvsAC == "Significant" ~ "DMR Passed Criteria",
+  TRUE ~ "Other"
+)
+# Save everything to Excel
+# write_xlsx(final_results, "Enrich_DMR_T_test_significance_results.xlsx")
+
+
+```
+## #Follow up stat manwhitney for stress group #biomarker####
+```{r}
+# Split sample columns by group
+ye_cols <- colnames(counts_matrix)[annotation_col$Group == "YE"]
+ae_cols <- colnames(counts_matrix)[annotation_col$Group == "AE"]
+yc_cols <- colnames(counts_matrix)[annotation_col$Group == "YC"]
+ac_cols <- colnames(counts_matrix)[annotation_col$Group == "AC"]
+
+# Function to perform row-wise Mann-Whitney U tests
+mw_test_results <- apply(counts_matrix, 1, function(row) {
+  ye_values <- as.numeric(row[ye_cols])
+  ae_values <- as.numeric(row[ae_cols])
+  yc_values <- as.numeric(row[yc_cols])
+  ac_values <- as.numeric(row[ac_cols])
+  
+  # Handle cases with too little variability
+  if (length(unique(ye_values)) <= 1 || length(unique(ae_values)) <= 1 ||
+      length(unique(yc_values)) <= 1 || length(unique(ac_values)) <= 1) {
+    return(c(NA, NA))
+  }
+  
+  # Perform Wilcoxon rank-sum tests
+  test_ye_ae <- tryCatch(wilcox.test(ye_values, ae_values)$p.value, error = function(e) NA)
+  test_ye_yc <- tryCatch(wilcox.test(ye_values, yc_values)$p.value, error = function(e) NA)
+  test_ae_ac <- tryCatch(wilcox.test(ae_values, ac_values)$p.value, error = function(e) NA)
+  
+  return(c(test_ye_ae, min(test_ye_yc, test_ae_ac)))
+})
+
+# Convert results to data frame
+mw_test_df <- as.data.frame(t(mw_test_results))
+colnames(mw_test_df) <- c("p_YE_vs_AE", "min_p_YEvsYC_or_AEvsAC")
+mw_test_df$location <- rownames(counts_matrix)
+
+# Merge with row annotations (optional)
+final_results <- cbind(mw_test_df, row_annotation[rownames(mw_test_df), , drop = FALSE])
+
+# Mark desired cases
+final_results$Category <- case_when(
+  final_results$p_YE_vs_AE > 0.05 & final_results$min_p_YEvsYC_or_AEvsAC < 0.05 ~ "Desired",
+  TRUE ~ "Other"
+)
+
+# Add interpretation columns
+final_results$Significance_YE_vs_AE <- ifelse(final_results$p_YE_vs_AE < 0.05, "Significant", "Not Significant")
+final_results$Significance_YEvsYC_or_AEvsAC <- ifelse(final_results$min_p_YEvsYC_or_AEvsAC < 0.05, "Significant", "Not Significant")
+
+# Summary logic
+final_results$Summary_Category <- case_when(
+  final_results$Significance_YE_vs_AE == "Not Significant" &
+    final_results$Significance_YEvsYC_or_AEvsAC == "Significant" ~ "DMR Passed Criteria",
+  TRUE ~ "Other"
+)
+
+# Filter results
+desired_rows <- final_results[final_results$Summary_Category == "DMR Passed Criteria", ]
+head(desired_rows)
+
+# Save results to Excel
+library(writexl)
+# write_xlsx(final_results, "Enrichment_DMR_MannWhitney_significance_results.xlsx")
+
+```
+#TOSTER ENRICH###
+
+```{r}
+# install.packages("TOSTER")
+# library(TOSTER)
+# 
+# # Define equivalence margin (adjust to your context)
+# delta <- 0.5  # This is your "biologically irrelevant" difference threshold
+# 
+# # Apply row-wise TOST using updated function
+# tost_results <- apply(counts_matrix, 1, function(row) {
+#   ys_values <- as.numeric(row[ys_cols])
+#   as_values <- as.numeric(row[as_cols])
+#   
+#   # Check for enough samples and variability
+#   if (length(ys_values) < 2 || length(as_values) < 2) return(NA)
+#   
+#   result <- tryCatch({
+#     test <- tsum_TOST(
+#       m1 = mean(ys_values),
+#       m2 = mean(as_values),
+#       sd1 = sd(ys_values),
+#       sd2 = sd(as_values),
+#       n1 = length(ys_values),
+#       n2 = length(as_values),
+#       low_eqbound = -delta,
+#       high_eqbound = delta,
+#       alpha = 0.05,
+#       var.equal = FALSE
+#     )
+#     return(test$TOST$p.value)  # Return TOST p-value for equivalence
+#   }, error = function(e) NA)
+#   
+#   return(result)
+# })
+# 
+# 
+# # Add to your result table
+# final_results$TOST_p_equivalence <- tost_results
+# 
+# # Mark those with strong evidence of equivalence
+# final_results$Equivalence_YS_vs_AS <- ifelse(final_results$TOST_p_equivalence < 0.05, "Equivalent", "Not Equivalent")
+# 
+# # Filter equivalent DMRs
+# equivalent_dmrs <- final_results[final_results$Equivalence_YS_vs_AS == "Equivalent", ]
+# 
+# # Save to Excel
+# write_xlsx(final_results, "TOST_Equivalence_YE_AE_results1111.xlsx")
+
+
+
+# or
+
+
+
+# Load TOSTER
+library(TOSTER)
+
+# Define equivalence margin and alpha
+delta <- 0.5  # adjust based on biological relevance
+alpha <- 0.05
+
+# Extract sample columns for YE and AE
+ye_cols <- colnames(counts_matrix)[annotation_col$Group == "YE"]
+ae_cols <- colnames(counts_matrix)[annotation_col$Group == "AE"]
+
+# Step 1: Run TOST row-wise
+tost_results_ye_ae <- apply(counts_matrix, 1, function(row) {
+  ye_values <- as.numeric(row[ye_cols])
+  ae_values <- as.numeric(row[ae_cols])
+  
+  if (length(ye_values) < 2 || length(ae_values) < 2) return(NA)
+  
+  tryCatch({
+    test <- tsum_TOST(
+      m1 = mean(ye_values),
+      m2 = mean(ae_values),
+      sd1 = sd(ye_values),
+      sd2 = sd(ae_values),
+      n1 = length(ye_values),
+      n2 = length(ae_values),
+      low_eqbound = -delta,
+      high_eqbound = delta,
+      alpha = alpha,
+      var.equal = FALSE
+    )
+    test$TOST$p.value[3]  # Combined p-value for equivalence
+  }, error = function(e) NA)
+})
+
+# Step 2: Clean row names and prepare to attach
+clean_names <- gsub("\\.\\d+$", "", names(tost_results_ye_ae))
+names(tost_results_ye_ae) <- clean_names
+
+# Step 3: Match and attach to final_results
+# Ensure your final_results table has been created from YE vs AE testing (e.g. Mann-Whitney)
+final_results$location_clean <- gsub("\\.\\d+$", "", rownames(final_results))
+
+# Assign p-values
+final_results$TOST_p_equivalence_YE_AE <- NA
+matched_indices <- match(final_results$location_clean, names(tost_results_ye_ae))
+final_results$TOST_p_equivalence_YE_AE[!is.na(matched_indices)] <- tost_results_ye_ae[matched_indices[!is.na(matched_indices)]]
+
+# Step 4: Annotate equivalence
+final_results$Equivalence_YE_vs_AE <- ifelse(
+  final_results$TOST_p_equivalence_YE_AE < alpha,
+  "Equivalent",
+  "Not Equivalent"
+)
+
+# ??? Done. You can now inspect or export final_results
+# summary(final_results$TOST_p_equivalence_YE_AE)
+# table(final_results$Equivalence_YE_vs_AE)
+
+# Optional: write to Excel
+# library(writexl)
+ write_xlsx(final_results, "Enrichment_DMR_TOST_YE_AE_result.xlsx")
+
+```
+
+#dynamic ### Enrich 
+
+```{r}
+
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/inta age")
+
+# Step 1: Separate DMRs by source
+# Step 1: Separate DMRs by source
+ye_dmr_locs <- dmr_data_EE$location
+ae_dmr_locs <- dmr_data_OE$location
+
+# Step 2: Get means per group for each DMR source
+get_group_means <- function(locations, group_cols) {
+  sub_matrix <- counts_matrix[rownames(counts_matrix) %in% locations, , drop = FALSE]
+  col_groups <- annotation_col[colnames(sub_matrix), , drop = FALSE]
+  
+  # Average within each group
+  means <- sapply(unique(col_groups$Group), function(group) {
+    group_cols <- rownames(col_groups[col_groups$Group == group, , drop = FALSE])
+    rowMeans(sub_matrix[, group_cols, drop = FALSE], na.rm = TRUE)
+  })
+  
+  # Mean of means per group (1 number per group)
+  colMeans(means, na.rm = TRUE)
+}
+
+ye_means <- get_group_means(ye_dmr_locs, annotation_col)
+ae_means <- get_group_means(ae_dmr_locs, annotation_col)
+
+# Step 3: Create data frame for plotting
+bar_data <- data.frame(
+  Group = rep(c("YE", "AE", "YC", "AC"), 2),
+  Methylation = c(ye_means, ae_means),
+  DMR_Source = rep(c("YE vs YC", "AE vs AC"), each = 4)
+)
+
+# Step 4: Plot the averages
+library(ggplot2)
+
+ggplot(bar_data, aes(x = Group, y = Methylation, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  facet_wrap(~DMR_Source) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Average Methylation per Group by DMR Source",
+    y = "Average Normalized Count",
+    x = "Group"
+  ) +
+  scale_fill_manual(values = c("YE" = "darkgreen", "AE" = "lightgreen", "YC" = "#FFD700", "AC" = "#f5f5dc")) +
+  theme(strip.text = element_text(size = 16, face = "bold"))
+
+
+# ggsave("Average_Methylation_Dynamics_Barplot.jpeg", width = 10, height = 6, units = "in", dpi = 300)
+
+# Install writexl if needed
+# install.packages("writexl")
+library(writexl)
+
+# Save the group-wise averages to Excel
+write_xlsx(bar_data, "Enrich_Methylation_Dynamics_Averages.xlsx")
+
+```
+```{r}
+# Step 1: Extract DMR locations
+# Step 1: Extract DMR locations
+ye_dmr_locs <- dmr_data_EE$location
+ae_dmr_locs <- dmr_data_OE$location
+
+# Step 2: Define group-wise means function
+get_group_means <- function(locations, group_cols) {
+  sub_matrix <- counts_matrix[rownames(counts_matrix) %in% locations, , drop = FALSE]
+  col_groups <- annotation_col[colnames(sub_matrix), , drop = FALSE]
+  
+  means <- sapply(unique(col_groups$Group), function(group) {
+    group_cols <- rownames(col_groups[col_groups$Group == group, , drop = FALSE])
+    rowMeans(sub_matrix[, group_cols, drop = FALSE], na.rm = TRUE)
+  })
+  
+  colMeans(means, na.rm = TRUE)
+}
+
+# Step 3: Get means
+ye_means <- get_group_means(ye_dmr_locs, annotation_col)
+ae_means <- get_group_means(ae_dmr_locs, annotation_col)
+
+# Step 4: Manually reorder the bar_data to match: YC, AC, YC, AC, YE, AE, YE, AE
+bar_data <- data.frame(
+  Group = c("YC", "AC", "YC", "AC", "YE", "AE", "YE", "AE"),
+  Methylation = c(ye_means["YC"], ye_means["AC"],
+                  ae_means["YC"], ae_means["AC"],
+                  ye_means["YE"], ye_means["AE"],
+                  ae_means["YE"], ae_means["AE"]),
+  DMR_Source = c("YE vs YC", "YE vs YC", "AE vs AC", "AE vs AC",
+                 "YE vs YC", "YE vs YC", "AE vs AC", "AE vs AC")
+)
+
+# Optional: set Group as a factor to control fill order
+bar_data$Group <- factor(bar_data$Group, levels = c("YC", "AC", "YE", "AE"))
+
+# Step 5: Plot the reordered data
+library(ggplot2)
+
+ggplot(bar_data, aes(x = Group, y = Methylation, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  facet_wrap(~DMR_Source) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Average Methylation per Group by DMR Source",
+    y = "Average Normalized Count",
+    x = "Group"
+  ) +
+  scale_fill_manual(values = c("YE" = "darkgreen", "AE" = "lightgreen", "YC" = "#FFD700", "AC" = "#f5f5dc")) +
+  theme(strip.text = element_text(size = 16, face = "bold"))
+
+# write_xlsx(bar_data, "Enrichment_Methylation_DMRs_Ordered.xlsx")
+
+```

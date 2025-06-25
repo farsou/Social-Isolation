@@ -1,0 +1,1276 @@
+---
+title: "Inter_age_isolation2025"
+author: "Farnaz Sourani"
+date: "2025-05-14"
+output: html_document
+---
+
+libraries
+```{r}
+## **Setup and Libraries**
+
+# Load required libraries
+library(MEDIPS)
+library(MEDIPSData)
+library(BSgenome.Ggallus.UCSC.galGal6)
+library(readr)
+library(RMariaDB)
+library(GenomicFeatures)
+library(org.Gg.eg.db)
+library(ChIPseeker)
+library(ChIPpeakAnno)
+library(rtracklayer)
+library(GenomicRanges)
+library(seqinr)
+library(rGADEM)
+library(Biostrings)
+library(calibrate)
+library(maptools)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(dplyr)
+library(gghighlight)
+library(tidyverse)
+library(ggbio)
+library(clusterProfiler)
+library(Cairo)
+library(ChIPpeakAnno)
+library(openxlsx)
+library(writexl)
+library(qtl)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(dplyr)
+library(gghighlight)
+library(tidyverse)
+library(ggbio)
+
+```
+
+loading data 
+
+```{r}
+# Set working directory and load data
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/New folder")
+
+load(file = "mr.edgeROI_S_IsolationEarlyOLD.rda")
+load(file = "mr.edgeROI_E_IsolationEarlyOLD.rda")
+load(file = "mr.edgeROI_C_IsolationEarlyOLD.rda")
+
+# Rename and clean
+EdgeR_EarlyC_OLD_S <- mr.edgeROI_S; rm(mr.edgeROI_S)
+EdgeR_EarlyC_OLD_E <- mr.edgeROI_E; rm(mr.edgeROI_E)
+EdgeR_EarlyC_OLD_C <- mr.edgeROI_C; rm(mr.edgeROI_C)
+
+```
+
+preparing data
+
+```{r}
+# Add metadata
+EdgeR_EarlyC_OLD_S$Test <- "y_C_a_S"; EdgeR_EarlyC_OLD_S$strand <- "*"
+EdgeR_EarlyC_OLD_E$Test <- "y_C_a_E"; EdgeR_EarlyC_OLD_E$strand <- "*"
+EdgeR_EarlyC_OLD_C$Test <- "y_C_a_C"; EdgeR_EarlyC_OLD_C$strand <- "*"
+
+# Generate Location column
+EdgeR_EarlyC_OLD_S$Location <- paste0(EdgeR_EarlyC_OLD_S$chr, ":", EdgeR_EarlyC_OLD_S$start, "-", EdgeR_EarlyC_OLD_S$stop)
+EdgeR_EarlyC_OLD_E$Location <- paste0(EdgeR_EarlyC_OLD_E$chr, ":", EdgeR_EarlyC_OLD_E$start, "-", EdgeR_EarlyC_OLD_E$stop)
+EdgeR_EarlyC_OLD_C$Location <- paste0(EdgeR_EarlyC_OLD_C$chr, ":", EdgeR_EarlyC_OLD_C$start, "-", EdgeR_EarlyC_OLD_C$stop)
+
+EarlyC_OLD_S <-EdgeR_EarlyC_OLD_S
+EarlyC_OLD_E <-EdgeR_EarlyC_OLD_E
+EarlyC_OLD_C <-EdgeR_EarlyC_OLD_C
+
+```
+
+create genomic updates
+
+```{r}
+# Convert to GRanges objects
+GR_EdgeR_EarlyC_OLD_S <-with(EdgeR_EarlyC_OLD_S, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+GR_EdgeR_EarlyC_OLD_E <-with(EdgeR_EarlyC_OLD_E, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+GR_EdgeR_EarlyC_OLD_C <-with(EdgeR_EarlyC_OLD_C, GRanges(chr, IRanges(start, stop), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location))
+
+
+EarlyC_OLD_S <-as.data.frame(GR_EdgeR_EarlyC_OLD_S)
+EarlyC_OLD_E <-as.data.frame(GR_EdgeR_EarlyC_OLD_E)
+EarlyC_OLD_C <-as.data.frame(GR_EdgeR_EarlyC_OLD_C)
+
+GR_EarlyC_OLD_S <- GR_EdgeR_EarlyC_OLD_S
+GR_EarlyC_OLD_E <- GR_EdgeR_EarlyC_OLD_E
+GR_EarlyC_OLD_C <- GR_EdgeR_EarlyC_OLD_C
+
+```
+
+extract sequence
+```{r}
+Seq_GR_EarlyC_OLD_S = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_EarlyC_OLD_S)
+Seq_GR_EarlyC_OLD_E = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_EarlyC_OLD_E)
+Seq_GR_EarlyC_OLD_C = BSgenome::getSeq(BSgenome.Ggallus.UCSC.galGal6, GR_EarlyC_OLD_C)
+
+```
+
+
+Calculate CG and GC Content
+```{r}
+# Count patterns
+Seq_CG_GR_EarlyC_OLD_S <- vcountPattern("CG", Seq_GR_EarlyC_OLD_S)
+Seq_CG_GR_EarlyC_OLD_E <- vcountPattern("CG", Seq_GR_EarlyC_OLD_E)
+Seq_CG_GR_EarlyC_OLD_C <- vcountPattern("CG", Seq_GR_EarlyC_OLD_C)
+
+Seq_GC_GR_EarlyC_OLD_S <- vcountPattern("GC", Seq_GR_EarlyC_OLD_S)
+Seq_GC_GR_EarlyC_OLD_E <- vcountPattern("GC", Seq_GR_EarlyC_OLD_E)
+Seq_GC_GR_EarlyC_OLD_C <- vcountPattern("GC", Seq_GR_EarlyC_OLD_C)
+
+#add CpG and GpC collumn to the Grange objects
+CG <-Seq_CG_GR_EarlyC_OLD_S
+GC <-Seq_GC_GR_EarlyC_OLD_S
+EarlyC_OLD_S <- cbind(EarlyC_OLD_S , CG,GC)
+CG <-Seq_CG_GR_EarlyC_OLD_E
+GC <-Seq_GC_GR_EarlyC_OLD_E
+EarlyC_OLD_E <- cbind(EarlyC_OLD_E, CG,GC)
+CG <-Seq_CG_GR_EarlyC_OLD_C
+GC <-Seq_GC_GR_EarlyC_OLD_C
+EarlyC_OLD_C <- cbind(EarlyC_OLD_C, CG,GC)
+
+
+#Genomic Ranges Object
+GR_EarlyC_OLD_S <-with(EarlyC_OLD_S, GRanges(seqnames, IRanges(start, end), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+GR_EarlyC_OLD_E <-with(EarlyC_OLD_E, GRanges(seqnames, IRanges(start, end), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+GR_EarlyC_OLD_C <-with(EarlyC_OLD_C, GRanges(seqnames, IRanges(start, end), strand, edgeR.logFC, edgeR.p.value, edgeR.adj.p.value, Test, Location, CG, GC))
+
+```
+creating resbind 
+
+
+```{r}
+resbind <- c(GR_EarlyC_OLD_S, GR_EarlyC_OLD_C, GR_EarlyC_OLD_E)
+resbind <- sortSeqlevels(resbind)
+resbind05 <- subset(resbind, edgeR.p.value<.05)
+
+resbindsig <- sign(resbind$edgeR.logFC)
+resbind$sig <- resbindsig
+
+positive_ranges <- resbind[resbind$sig == 1, ]
+negative_ranges <- resbind[resbind$sig == -1, ]
+resbindsig <- sign(resbind$edgeR.logFC)
+resbind$sig <- resbindsig
+
+positive_ranges <- resbind[resbind$sig == 1, ]
+negative_ranges <- resbind[resbind$sig == -1, ]
+
+library(ChIPpeakAnno)
+library("Cairo")
+GR_EarlyC_OLD_S05<-subset(GR_EarlyC_OLD_S, edgeR.p.value<.05)
+GR_EarlyC_OLD_C05<-subset(GR_EarlyC_OLD_C, edgeR.p.value<.05)
+GR_EarlyC_OLD_E05<-subset(GR_EarlyC_OLD_E, edgeR.p.value<.05)
+
+GR_EarlyC_OLD_S05_pos<-subset(positive_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_S05_pos <- subset(positive_ranges, grepl("y_C_a_S", Test) & edgeR.p.value < 0.05)
+
+
+GR_EarlyC_OLD_C05_pos<-subset(positive_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_C05_pos <- subset(positive_ranges, grepl("y_C_a_C", Test) & edgeR.p.value < 0.05)
+
+GR_EarlyC_OLD_E05_pos<-subset(positive_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_E05_pos <- subset(positive_ranges, grepl("y_C_a_E", Test) & edgeR.p.value < 0.05)
+####negative
+GR_EarlyC_OLD_S05_neg<-subset(negative_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_S05_neg <- subset(negative_ranges, grepl("y_C_a_S", Test) & edgeR.p.value < 0.05)
+
+GR_EarlyC_OLD_C05_neg<-subset(negative_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_C05_neg <- subset(negative_ranges, grepl("y_C_a_C", Test) & edgeR.p.value < 0.05)
+
+GR_EarlyC_OLD_E05_neg<-subset(negative_ranges, edgeR.p.value<.05)
+GR_EarlyC_OLD_E05_neg <- subset(negative_ranges, grepl("y_C_a_E", Test) & edgeR.p.value < 0.05)
+
+
+
+resbind05 <- c(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+resbind05pos <- c(GR_EarlyC_OLD_S05_pos, GR_EarlyC_OLD_C05_pos, GR_EarlyC_OLD_E05_pos)
+resbind05neg <- c(GR_EarlyC_OLD_S05_neg, GR_EarlyC_OLD_C05_neg, GR_EarlyC_OLD_E05_neg)
+
+
+# resbind05 <- c(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+# resbind05pos <- c(GR_EarlyC_OLD_S05_pos, GR_EarlyC_OLD_C05_pos, GR_EarlyC_OLD_E05_pos)
+# resbind05neg <- c(GR_EarlyC_OLD_S05_neg, GR_EarlyC_OLD_C05_neg, GR_EarlyC_OLD_E05_neg)
+# Add Methylation_Status column correctly
+# Recalculate the 'sig' column for the subset
+resbind05$sig <- sign(resbind05$edgeR.logFC)
+resbind05$Methylation_Status <- ifelse(resbind05$sig == 1, "Hypermethylation", ifelse(resbind05$sig == -1, "Hypomethylation", "Unknown"))
+
+# Convert GRanges object to data frame
+resbind_df <- as.data.frame(resbind05)
+
+
+# Save the data to an Excel file using writexl
+library(writexl)
+# write_xlsx(resbind_df, path = "resbind05_methylation_status.xlsx")
+
+print("Excel file saved successfully using writexl: resbind05_methylation_status.xlsx")
+
+
+```
+extract annotation for #supplementary 
+
+```{r}
+# Load necessary libraries
+library(TxDb.Ggallus.UCSC.galGal6.refGene)
+library(ChIPseeker)
+library(org.Gg.eg.db)
+library(writexl)
+
+# Load the transcript database
+gg_txdb <- TxDb.Ggallus.UCSC.galGal6.refGene
+
+# List of GRanges objects and their names
+
+gr_objects <- list(
+  "AS vs YC" = GR_EarlyC_OLD_S,
+  "AC vs YC" = GR_EarlyC_OLD_C,
+  "AE vs YC" = GR_EarlyC_OLD_E
+)
+# Initialize a list to store filtered results
+filtered_results <- list()
+
+# Loop through each GRanges object, annotate and filter
+for (name in names(gr_objects)) {
+  # Annotate peaks
+  peakAnno <- annotatePeak(gr_objects[[name]], TxDb=gg_txdb, annoDb="org.Gg.eg.db")
+  
+  # Convert to data frame
+  peakAnno_df <- as.data.frame(peakAnno)
+  
+  # Filter the data frame to include only rows where p-value is less than 0.05
+  filtered_peakAnno <- peakAnno_df[peakAnno_df$edgeR.p.value <= 0.05, ]
+    # filtered_peakAnno <- peakAnno_df[peakAnno_df$edgeR.p.value <= 0.01, ]
+
+  # Store the filtered results in the list
+  filtered_results[[name]] <- filtered_peakAnno
+}
+
+# Save all filtered results to an Excel file with each data frame in a separate sheet
+# write_xlsx(filtered_results, path = "Filtered_PeakAnno_p0.05_inter.xlsx")
+# write_xlsx(filtered_results, path = "Filtered_PeakAnno_p0.01_inter.xlsx")
+
+```
+
+Generate Volcano Plot
+```{r}
+# tiff("Vulcano_ECvOall.tiff", units="cm", width=30, height=30, res=600, compression = "lzw")
+# Make a basic volcano plot
+with(resbind, plot(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="white", main="Volcano plot", xlim=c(-4,4)))
+# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
+with(subset(GR_EarlyC_OLD_C, edgeR.p.value<.9), points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="red"))
+with(subset(GR_EarlyC_OLD_S, edgeR.p.value<.9), points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="yellow4"))
+with(subset(GR_EarlyC_OLD_E, edgeR.p.value<.9), points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="cyan4"))
+
+#with(subset(GR_EarlyC_OLD_S, edgeR.p.value<.0005 & abs(edgeR.logFC)>1), pointLabel(edgeR.logFC, -log10(edgeR.p.value), labels=Location, cex=.6, offset = 1))
+#with(subset(GR_EarlyC_OLD_E, edgeR.p.value<.0005 & abs(edgeR.logFC)>1), pointLabel(edgeR.logFC, -log10(edgeR.p.value), labels=Location, cex=.6, offset = 1))
+#with(subset(GR_EarlyC_OLD_C, edgeR.p.value<.0005 & abs(edgeR.logFC)>1), pointLabel(edgeR.logFC, -log10(edgeR.p.value), labels=Location, cex=.6, offset = 1))
+#  with(subset(resSW_EE, edgeR.p.value<.0005 & abs(edgeR.logFC)>1), pointLabel(edgeR.logFC, -log10(edgeR.p.value), labels=Location, cex=.6, offset = 1))
+
+abline(1.30103, 0, col = "red")
+abline(2.30103, 0, col = "yellow")
+abline(3.30103, 0, col = "green")
+# dev.off() 
+
+
+```
+
+another volcano plot which i  used for publication
+
+```{r}
+# Create a TIFF file with specified dimensions and resolution
+tiff("Volcano_inter_age.tiff", units="cm", width=20, height=20, res=600, compression="lzw")
+
+# Adjust margins to bring Y-axis label closer
+par(mar=c(5, 5, 4, 2))  # Adjust margins: bottom, left, top, right
+
+# Create the base volcano plot with customized labels and sizes
+with(resbind, plot(edgeR.logFC, -log10(edgeR.p.value), 
+                   pch=20, col="white",  # Start with an empty canvas
+                   # main="Volcano Plot (Aging)",  # Add a descriptive title
+                   xlim=c(-4, 6),       # Set limits for X-axis
+                   ylim=c(0, 25),       # Set limits for Y-axis
+                   xlab="Log2 Fold Change (FC)",  # X-axis label
+                   ylab="-Log10 P-value",        # Y-axis label
+                   cex.lab=1.6,                  # Increase label size
+                   cex.main=1.8,                 # Increase title size
+                   cex.axis=1.4))                # Increase tick label size
+
+# Add points for each condition
+with(subset(GR_EarlyC_OLD_C, edgeR.p.value < 0.9), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="yellow3"))  # Red points
+with(subset(GR_EarlyC_OLD_S, edgeR.p.value < 0.9), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="purple"))  # Yellow points
+with(subset(GR_EarlyC_OLD_E, edgeR.p.value < 0.9), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="green"))  # Cyan points
+
+# Highlight significant points with larger symbols
+with(subset(GR_EarlyC_OLD_C, edgeR.p.value < 0.05 & abs(edgeR.logFC) > 1), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="yellow3", cex=1.5))
+with(subset(GR_EarlyC_OLD_S, edgeR.p.value < 0.05 & abs(edgeR.logFC) > 1), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="purple", cex=1.5))
+with(subset(GR_EarlyC_OLD_E, edgeR.p.value < 0.05 & abs(edgeR.logFC) > 1), 
+     points(edgeR.logFC, -log10(edgeR.p.value), pch=20, col="green", cex=1.5))
+
+# Add horizontal lines for significance thresholds
+abline(h=-log10(0.05), col="black", lty=1, lwd=2)   # Solid line for p = 0.05
+abline(h=-log10(0.01), col="black", lty=2, lwd=2)   # Dashed line for p = 0.01
+
+# Add text annotations for significance thresholds
+text(x=4.5, y=-log10(0.05) + 0.1, labels="p = 0.05", col="black", pos=4, cex=0.8)
+text(x=4.5, y=-log10(0.01) + 0.1, labels="p = 0.01", col="black", pos=4, cex=0.8)
+
+# Add a legend to the plot
+legend("topright", legend=c("AC vs YC", "AS vs YC", "AE vs YC"),
+       col=c("yellow3", "purple", "green"), pch=20, cex=1.4)  # Adjust legend formatting
+
+# Save and close the TIFF file
+dev.off()
+
+```
+
+
+Manhattan plots
+
+```{r}
+# tiff("Chicken_Isolation_manhatahnESC.tiff", units="cm", width=30.00, height=15.00, res=600, compression = "lzw")
+# 
+# autoplot(resbind, coord = "genome", geom = "point", aes(y = -log10(edgeR.p.value), color=Test), space.skip = 0.01, spaceline = TRUE, legend = TRUE) +
+#   
+#   scale_color_manual(values=c("red3", "cyan3", "yellow3"))+
+#   #                                OE       OS        EE      ES        
+#   #  scale_color_manual(values=c("yellow3", "yellow"))+
+#   # scale_color_manual(values=c("cyan3", "cyan"))+
+#   
+#   geom_hline(yintercept= 3.30103, color='seagreen', size=0.2) +
+#   geom_hline(yintercept= 2.30103, color='yellow4', size=0.2) +
+#   geom_hline(yintercept= 1.30103, color='red', size=0.2) +
+#   
+#   theme(axis.text.x=element_text(angle=90, hjust=0, size = 6)) 
+# 
+# dev.off()
+# 
+# tiff("Chicken_Foldchange_manhatahn_ESC.tiff", units="cm", width=30.00, height=15.00, res=600, compression = "lzw")
+
+autoplot(resbind, coord = "genome", geom = "point", aes(y = edgeR.logFC, color=Test), space.skip = 0.01, spaceline = TRUE, legend = TRUE) +
+  #  scale_color_manual(values=c("cyan3", "yellow3", "cyan", "yellow"))+
+  geom_point(color = ifelse(resbind$edgeR.p.value<.05, "black", NA), shape=23, size = 3) +
+  #geom_text(aes(label=ifelse(edgeR.adj.p.value<.5, as.character(Location),'')),hjust=0,vjust=0)
+  
+  #geom_point(aes(if(resbindS$edgeR.p.value<.05)), color=TRUE, shape=23)+
+  
+  #                                OE       OS        EE      ES        
+  #scale_color_manual(values=c("yellow3", "yellow"))+
+  
+  scale_color_manual(values=c("red3", "cyan3", "yellow3"))+
+  
+  # geom_hline(yintercept= 3.30103, color='seagreen', size=0.2) +
+  #  geom_hline(yintercept= 2.30103, color='yellow4', size=0.2) +
+  #  geom_hline(yintercept= 1.30103, color='red', size=0.2) +
+  geom_hline(yintercept= 0, color='black', size=0.2) +
+  
+  
+  # geom_point(shape=23, aes(color= sig , size=3))+
+  
+  theme(axis.text.x=element_text(angle=90, hjust=0, size = 6))
+#geom_point(data = ex, mapping = aes(x = Location, y =  -log10(edgeR.p.value)), color="red") +
+
+
+dev.off()
+
+resbind05 <- subset(resbind, edgeR.p.value<.05)
+# tiff("Chicken_Foldchange_manhatahn_ESC005.tiff", units="cm", width=30.00, height=15.00, res=600, compression = "lzw")
+
+autoplot(resbind, coord = "genome", geom = "point", aes(y = edgeR.logFC, color = ifelse(resbind$edgeR.p.value<.05, Test, NA)), space.skip = 0.01, spaceline = TRUE, legend = FALSE) +
+  #  scale_color_manual(values=c("cyan3", "yellow3", "cyan", "yellow"))+
+#  geom_point(color = ifelse(resbind$edgeR.p.value<.05, Test, NA), shape=23, size = 3) +
+      #geom_text(aes(label=ifelse(edgeR.adj.p.value<.5, as.character(Location),'')),hjust=0,vjust=0)
+   #                                OE       OS        EE      ES        
+  #scale_color_manual(values=c("yellow3", "yellow"))+
+  
+  scale_color_manual(values=c("red3", "cyan3", "yellow3"))+
+  
+  # geom_hline(yintercept= 3.30103, color='seagreen', size=0.2) +
+  #  geom_hline(yintercept= 2.30103, color='yellow4', size=0.2) +
+  #  geom_hline(yintercept= 1.30103, color='red', size=0.2) +
+  geom_hline(yintercept= 0, color='black', size=0.2) +
+  
+  
+  # geom_point(shape=23, aes(color= sig , size=3))+
+  
+  theme(axis.text.x=element_text(angle=90, hjust=0, size = 6))
+#geom_point(data = ex, mapping = aes(x = Location, y =  -log10(edgeR.p.value)), color="red") +
+
+
+# dev.off()
+
+```
+
+
+table of frequency
+```{r}
+# dmr_granges <- list(
+#   "ASvsYC" = GR_EarlyC_OLD_S,
+#   "AEvsYC" = GR_EarlyC_OLD_E,
+#   "ACvsYC" = GR_EarlyC_OLD_C
+# )
+
+
+dmr_granges <- list(
+  "ASvsYC" = GR_EarlyC_OLD_S05,
+  "AEvsYC" = GR_EarlyC_OLD_E05,
+  "ACvsYC" = GR_EarlyC_OLD_C05
+
+)
+
+
+
+# Function to count DMRs per chromosome
+count_dmrs_per_chr <- function(gr_obj, treatment_name) {
+  data.frame(
+    Treatment = treatment_name,
+    Chromosome = as.character(seqnames(gr_obj)),
+    stringsAsFactors = FALSE
+  ) %>%
+    count(Treatment, Chromosome, name = "DMR_Count")
+}
+
+# Apply the function to all treatments and combine results
+dmr_chr_counts <- bind_rows(
+  lapply(names(dmr_granges), function(name) {
+    count_dmrs_per_chr(dmr_granges[[name]], name)
+  })
+)
+
+# View result
+print(dmr_chr_counts)
+
+# Optional: Save to Excel or CSV
+# write.csv(dmr_chr_counts, "DMR_counts_per_chromosome_per_treatment_interage.csv", row.names = FALSE)
+# write_xlsx(dmr_chr_counts, path = "DMR_counts_per_chromosome_per_treatment_0.05_interage.xlsx")
+write_xlsx(dmr_chr_counts, path = "//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/R/DMR_counts_nofilter_interage_05.xlsx")
+
+library(ggplot2)
+library(dplyr)
+
+# Set the chromosome order explicitly (adjust if your chromosomes differ)
+chrom_order <- paste0("chr", c(1:33 , "Z"))
+# Define chromosome order
+# chrom_order <- paste0("chr", c(1:33, "Z"))
+
+# Clean Chromosome column (remove any spaces, if needed)
+dmr_chr_counts$Chromosome <- trimws(as.character(dmr_chr_counts$Chromosome))
+
+# Set Chromosome as a factor with the correct order
+dmr_chr_counts$Chromosome <- factor(dmr_chr_counts$Chromosome, levels = chrom_order)
+
+# Optional: filter out chromosomes not in the defined order (e.g., "chrM" or "chrUn")
+dmr_chr_counts <- dmr_chr_counts %>% filter(!is.na(Chromosome))
+dmr_chr_counts$Chromosome <- factor(dmr_chr_counts$Chromosome, levels = chrom_order)
+
+```
+
+
+
+Venn diagram with p value <0.01
+```{r}
+library(ChIPpeakAnno)
+library("Cairo")
+
+# Subset based on p-value
+GR_EarlyC_OLD_S01 <- subset(GR_EarlyC_OLD_S, edgeR.p.value < .01)
+GR_EarlyC_OLD_C01 <- subset(GR_EarlyC_OLD_C, edgeR.p.value < .01)
+GR_EarlyC_OLD_E01 <- subset(GR_EarlyC_OLD_E, edgeR.p.value < .01)
+# Combine filtered GRanges objects directly
+# GR_EarlyC_OLD_S01 <- subset(gr_objects[["AS vs YC"]], edgeR.p.value <= 0.01)
+# GR_EarlyC_OLD_C01 <- subset(gr_objects[["AC vs YC"]], edgeR.p.value <= 0.01)
+# GR_EarlyC_OLD_E01 <- subset(gr_objects[["AE vs YC"]], edgeR.p.value <= 0.01)
+
+
+# Combine results
+resbind01 <- c(GR_EarlyC_OLD_S01, GR_EarlyC_OLD_C01, GR_EarlyC_OLD_E01)
+# resbind01df <- as.data.frame(resbind01)
+# write_xlsx(resbind01df, path = "resbind01df.xlsx")
+# Split by test type
+grl <- splitAsList(resbind01, resbind01$Test)
+
+# Create Venn Diagram with updated labels
+# png("venn01_inter_age.png", width = 800, height = 800, res = 150) # Adjust width, height, and resolution as needed
+jpeg("Venn_diagram_Inter_Age_0.01_rearrenge_peak.jpeg", width = 10, height = 10, units = "in", res = 300)
+
+res <- makeVennDiagram(
+  Peaks = grl,
+  NameOfPeaks = c("AC vs YC", "AE vs YC", "AS vs YC"),  # Updated labels
+  # main = "Isolation: Young Controls vs Adults (p-value<0.01)",
+  col = "black",
+  fill = c("yellow", "green", "purple"),
+  alpha = 0.50, cex = 3, cat.cex = 2.5, cex.main = 5
+)
+dev.off()
+
+```
+extracting common DMRs
+
+
+```{r}
+library(ChIPpeakAnno)
+
+ol <- findOverlapsOfPeaks(
+  GR_EarlyC_OLD_S01,
+  GR_EarlyC_OLD_C01,
+  GR_EarlyC_OLD_E01
+)
+overlap_SCE <- ol$peaklist[["GR_EarlyC_OLD_S01///GR_EarlyC_OLD_C01///GR_EarlyC_OLD_E01"]]
+df_overlap_SCE <- as.data.frame(overlap_SCE)
+df_overlap_SCE$location <- paste0(df_overlap_SCE$seqnames, ":", df_overlap_SCE$start, "-", df_overlap_SCE$end)
+
+library(openxlsx)
+wb <- createWorkbook()
+
+addWorksheet(wb, "S_C_E")
+writeData(wb, "S_C_E", df_overlap_SCE)
+
+
+# Save the workbook
+saveWorkbook(wb, file = "Overlapping_DMRs_From_Venn.xlsx", overwrite = TRUE)
+
+```
+
+#barplot testing
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Extract the necessary data from resbind01
+resbind05_df <- as.data.frame(resbind05)
+
+# Group by 'Test' and calculate counts for hypermethylation and hypomethylation based on edgeR.logFC
+barplot_data <- resbind05_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation")) %>%
+  group_by(Test, Methylation) %>%
+  summarise(Count = n()) %>%
+  rename(Group = Test)
+
+# Plot the bar plot
+ggplot(barplot_data, aes(x = Group, y = Count, fill = Methylation)) +
+  geom_bar(stat = "identity", position = "dodge") +
+    geom_text(aes(label = Count), vjust = -0.5, position = position_dodge(width = 0.8)) + #to remove the number on top hash out
+  labs(title = "Methylation Level Comparison", x = "Group", y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+library(openxlsx)
+
+# Save barplot data to Excel
+wb <- createWorkbook()
+addWorksheet(wb, "Methylation_Counts")
+writeData(wb, "Methylation_Counts", barplot_data)
+saveWorkbook(wb, file = "Methylation_Barplot_Data.xlsx", overwrite = TRUE)
+```
+
+
+ i want to extracts unique location###############
+########## they are used in for heat map 
+
+```{r}
+# Ensure your GRanges objects are loaded:
+GR_EarlyC_OLD_S05
+GR_EarlyC_OLD_C05
+GR_EarlyC_OLD_E05
+
+# Combine GRanges objects for comparisons
+GR_CE <- c(GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+GR_SE <- c(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_E05)
+GR_SC <- c(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05)
+
+# Find overlaps and extract unique regions for S
+overlaps_S_CE <- findOverlaps(GR_EarlyC_OLD_S05, GR_CE)
+unique_S_indices <- setdiff(seq_along(GR_EarlyC_OLD_S05), queryHits(overlaps_S_CE))
+unique_S <- GR_EarlyC_OLD_S05[unique_S_indices]
+
+# Find overlaps and extract unique regions for C
+overlaps_C_SE <- findOverlaps(GR_EarlyC_OLD_C05, GR_SE)
+unique_C_indices <- setdiff(seq_along(GR_EarlyC_OLD_C05), queryHits(overlaps_C_SE))
+unique_C <- GR_EarlyC_OLD_C05[unique_C_indices]
+
+# Find overlaps and extract unique regions for E
+overlaps_E_SC <- findOverlaps(GR_EarlyC_OLD_E05, GR_SC)
+unique_E_indices <- setdiff(seq_along(GR_EarlyC_OLD_E05), queryHits(overlaps_E_SC))
+unique_E <- GR_EarlyC_OLD_E05[unique_E_indices]
+
+# Convert unique regions to data frames
+unique_S_df <- as.data.frame(unique_S)
+unique_C_df <- as.data.frame(unique_C)
+unique_E_df <- as.data.frame(unique_E)
+
+# Save unique regions to an Excel file
+wb <- createWorkbook()
+
+# Add each unique set to a sheet
+addWorksheet(wb, "Unique_S")
+writeData(wb, "Unique_S", unique_S_df)
+
+addWorksheet(wb, "Unique_C")
+writeData(wb, "Unique_C", unique_C_df)
+
+addWorksheet(wb, "Unique_E")
+writeData(wb, "Unique_E", unique_E_df)
+
+# Save the workbook
+# saveWorkbook(wb, "Unique_Genomic_Regions.xlsx", overwrite = TRUE)
+# 
+# cat("Unique regions have been saved to Unique_Genomic_Regions.xlsx\n")
+
+```
+
+#####barplot####
+
+```{r}
+# Assume unique_S_df, unique_C_df, unique_E_df already exist from the earlier code
+# Add hypermethylation/hypomethylation column based on edgeR.logFC
+unique_S_df <- unique_S_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+unique_C_df <- unique_C_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+unique_E_df <- unique_E_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+# Save updated data frames to an Excel file
+wb <- createWorkbook()
+addWorksheet(wb, "Unique_S")
+writeData(wb, "Unique_S", unique_S_df)
+
+addWorksheet(wb, "Unique_C")
+writeData(wb, "Unique_C", unique_C_df)
+
+addWorksheet(wb, "Unique_E")
+writeData(wb, "Unique_E", unique_E_df)
+
+# saveWorkbook(wb, "Unique_Genomic_Regions_with_Methylation.xlsx", overwrite = TRUE)
+# cat("Updated Excel file saved with Methylation column.\n")
+
+#then start creating the plot#
+
+table(unique_S_df$Methylation)
+table(unique_C_df$Methylation)
+table(unique_E_df$Methylation)
+
+
+unique_S_df <- unique_S_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+unique_C_df <- unique_C_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+unique_E_df <- unique_E_df %>%
+  mutate(Methylation = ifelse(edgeR.logFC > 0, "Hypermethylation", "Hypomethylation"))
+
+
+colnames(unique_S_df) <- trimws(colnames(unique_S_df))
+colnames(unique_C_df) <- trimws(colnames(unique_C_df))
+colnames(unique_E_df) <- trimws(colnames(unique_E_df))
+
+
+unique_S_df <- as.data.frame(unique_S_df)
+unique_C_df <- as.data.frame(unique_C_df)
+unique_E_df <- as.data.frame(unique_E_df)
+
+table(unique_S_df$Methylation)
+table(unique_C_df$Methylation)
+table(unique_E_df$Methylation)
+
+
+
+library(ggplot2)
+
+# Combine the data into a single data frame
+# methylation_counts <- data.frame(
+#   Group = rep(c("AS vs YC", "AC vs YC", "AE vs YC"), each = 2),
+#   Methylation = rep(c("Hypermethylation", "Hypomethylation"), times = 3),
+#   Count = c(134, 52, 85, 94, 40, 60)
+# )
+methylation_counts <- data.frame(
+  Group = rep(c("AC vs YC","AS vs YC","AE vs YC"), each = 2),
+  Methylation = rep(c("Hypermethylation", "Hypomethylation"), times = 3),
+  Count = c(85, 94, 134, 52, 40, 60)
+)
+
+# Reorder the Group levels
+methylation_counts$Group <- factor(methylation_counts$Group, levels = c( "AC vs YC","AS vs YC", "AE vs YC"))
+methylation_counts$Methylation <- factor(methylation_counts$Methylation, levels = c("Hypomethylation", "Hypermethylation"))
+
+# Create the bar plot with annotations inside the bars
+plot <- ggplot(methylation_counts, aes(x = Group, y = Count, fill = Methylation)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  
+  # geom_text(
+  #   aes(label = Count), 
+  #   # position = position_dodge(width = 0.7), 
+  #   vjust = 1.5,  # Adjust vertical position to place inside the bars
+  #   color = "black",  # Use white text for contrast
+  #   size = 4.5  # Adjust text size
+  # ) +
+  labs(
+    # title = "Methylation Distribution Across Aging Groups",
+    # x = "Aging Groups",
+    y = "Number of DMRs"
+  ) +
+  scale_fill_manual(
+    values = c("Hypermethylation" = "#D73027", "Hypomethylation" = "#4575B4"),  # Colorblind-friendly palette
+    name = ""  # Rename legend title
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 16, hjust = 0.5, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+    panel.grid.major = element_blank(),
+    axis.line = element_line(color = "black"), axis.line.x.bottom = element_blank(), axis.line.y = element_line(color = "black", size = 1))
+
+# Save the plot with high resolution
+# pdf("Inter_age_ barplot_0.05.pdf", width = 10, height = 10)  # size in inches
+
+ggsave("Inter_age_ barplot_0.05.pdf", width = 8.27, height = 11.69, units = "in", dpi = 300)  # A4 size
+# Save the plot as a PNG file
+ggsave("Inter_age_ barplot_0.05.pdf",
+       plot = plot,
+       width = 8.27,
+       height = 11.69,
+       units = "in",
+       dpi = 300)  # A4 size, 300 DPI for high resolution
+```
+
+#A pie chart is used to demonstrate the overlap features of the common peaks.
+```{r}
+#pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]$overlapFeature))
+ol <- findOverlapsOfPeaks(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+ol$venn_cnt
+ol$peaklist
+
+# CairoPDF("OverlapFeatures.pdf")
+for (i in 1:1){
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05"]]$overlapFeature), main="Isolation: YCvsA_Stress vs Control")
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_E05"]]$overlapFeature), main="Isolation: YCvsA_Stress vs Enriched")
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]$overlapFeature), main="Isolation: YCvsA_Enriched vs Control")
+}
+# dev.off()
+```
+annotation
+
+```{r}
+###annotation####
+# Load necessary libraries
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/R")
+
+library(readxl)
+library(GenomicRanges)
+library(TxDb.Ggallus.UCSC.galGal6.refGene)
+library(ChIPseeker)
+library(org.Gg.eg.db)
+library(writexl)
+
+# Step 1: Load all sheets
+sheets <- excel_sheets("Unique_Genomic_Regions.xlsx")
+dmr_data_list <- lapply(sheets, function(sheet) read_excel("Unique_Genomic_Regions.xlsx", sheet = sheet))
+names(dmr_data_list) <- sheets
+
+# Step 2: Annotate each sheet
+gg_txdb <- TxDb.Ggallus.UCSC.galGal6.refGene  # Load transcript database
+annotated_results <- list()  # To store results
+
+for (sheet_name in sheets) {
+  # Read data from the current sheet
+  dmr_data <- dmr_data_list[[sheet_name]]
+  
+  # Standardize column names
+  colnames(dmr_data) <- c("seqnames", "start", "end", "width", "strand", 
+                          "annotation", "geneChr", "geneStart", "geneEnd", 
+                          "geneLength", "geneStrand", "geneId", "transcriptId", 
+                          "distanceToTSS", "ENSEMBL", "SYMBOL", "GENENAME")
+  
+  dmr_data$seqnames <- as.character(dmr_data$seqnames)
+  
+  # Convert to GRanges
+  dmr_gr <- GRanges(seqnames = dmr_data$seqnames,
+                    ranges = IRanges(start = dmr_data$start, end = dmr_data$end))
+  
+  # Annotate peaks
+  annotated <- annotatePeak(dmr_gr, 
+                            tssRegion = c(-3000, 3000), 
+                            TxDb = gg_txdb, 
+                            annoDb = "org.Gg.eg.db")
+  
+  # Convert to data frame and store
+  annotated_results[[sheet_name]] <- as.data.frame(annotated)
+}
+
+# Step 3: Save all annotated results to an Excel file
+# write_xlsx(annotated_results, path = "Annotated_Unique_Genomic_Regions_Aging.xlsx")
+
+
+```
+
+
+heatmap 0.01
+```{r}
+#heatmap
+
+setwd("//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/New folder")
+# 
+# #heatmap with color code####
+# # Load necessary libraries
+# library(dplyr)
+# library(pheatmap)
+# library(readxl)
+# 
+# # Load the normalized counts data
+load(file = "main.counts.final.cpm.tmm.normalized.rda")
+main_counts <- counts.final.cpm.tmm.normalized
+# 
+# # Load the unique counts data
+load(file = "unique.counts.final.cpm.tmm.normalized.rda")
+unique_counts <- counts.final.cpm.tmm.normalized
+
+# Combine the datasets
+combined_counts <- rbind(main_counts, unique_counts)
+
+library(readxl)
+# Read DMR data from the Excel file, they should be run one by one for each heatmap
+#dmr_data <- read_excel("Unique_Genomic_Regions_01.xlsx", sheet = "Unique_S")
+# dmr_data <- read_excel("Unique_Genomic_Regions_01.xlsx", sheet = "Unique_C")
+#dmr_data <- read_excel("Unique_Genomic_Regions_01.xlsx", sheet = "Unique_E")
+dmr_data <- dmr_data <- read_excel("Overlapping_DMRs_From_Venn.xlsx")
+
+
+
+dmr_data <- dmr_data %>%
+  mutate(location = paste0(seqnames, ":", start, "-", end))
+
+# Extract the location vector from dmr_data
+dmr_locations <- dmr_data$location
+
+# Check for overlap between the two datasets
+overlap <- intersect(combined_counts$location, dmr_data$location)
+if (length(overlap) > 0) {
+  print("Overlap found:")
+  print(overlap)
+} else {
+  print("No overlap found.")
+}
+
+# Filter combined_counts for overlapping locations
+overlap_counts <- combined_counts[combined_counts$location %in% overlap, ]
+
+# Set row names as the location names
+rownames(overlap_counts) <- overlap_counts$location
+
+# Extract the counts matrix (excluding non-numeric columns)
+counts_matrix <- as.matrix(overlap_counts[, -c(1:9)])  # Adjust column indices as needed
+
+# Create groups based on column names
+sample_names <- colnames(counts_matrix)
+groups <- case_when(
+  grepl("earlystress_.*_S", sample_names) ~ "YS",
+  grepl("earlystress_.*_E", sample_names) ~ "YE",
+  grepl("earlystress_.*_C", sample_names) ~ "YC",
+  grepl("chicken_.*_S", sample_names) ~ "AS",
+  grepl("chicken_.*_E", sample_names) ~ "AE",
+  grepl("chicken_.*_C", sample_names) ~ "AC",
+  TRUE ~ "Other"
+)
+
+
+# Create an annotation data frame
+# annotation_col <- data.frame(Group = factor(groups, levels = c("Young_S", "Young_E", "Young_C", "Adult_S", "Adult_E", "Adult_C")))
+annotation_col <- data.frame(Group = factor(groups, levels = c("YS", "AS","YE", "AE", "YC", "AC")))
+
+rownames(annotation_col) <- sample_names
+
+
+# Reorder columns of the counts matrix
+ordered_indices <- order(annotation_col$Group)
+counts_matrix <- counts_matrix[, ordered_indices]
+annotation_col <- annotation_col[ordered_indices, , drop = FALSE]
+
+#with positive z score#
+# Custom scaling: Calculate z-scores and make them non-negative
+scaled_counts_matrix <- t(apply(counts_matrix, 1, function(row) {
+  z_scores <- (row - mean(row)) / sd(row) # Calculate z-scores
+  z_scores + abs(min(z_scores))          # Shift to make all values non-negative
+}))
+
+
+color_palette <- colorRampPalette(c("white",  "#FF0000"))(100)
+
+
+# Define custom annotation colors
+annotation_colors <- list(
+  Group = c(
+    "YS" = "#4B0082",
+    "AS" = "#9370DB",
+    "YE" = "darkgreen",
+    "AE" = "lightgreen",
+    "YC" = "#FFD700",  # Dark yellow
+    "AC" = "#f5f5dc")
+)
+
+# Save the heatmap as a JPEG
+#jpeg("Stress_Unique_DMRs_Heatmap_Aging_01.jpeg", width = 25, height = 8, units = "in", res = 300)
+# jpeg("Control_Unique_DMRs_Heatmap_Aging_01.jpeg", width = 25, height = 8, units = "in", res = 300)
+#jpeg("Enrich_Unique_DMRs_Heatmap_Aging_01.jpeg", width = 25, height = 5, units = "in", res = 300)
+jpeg("common_DMRs_Heatmap_Aging_01.jpeg", width = 25, height = 8, units = "in", res = 300)
+
+library(pheatmap)
+# Generate the heatmap
+pheatmap(
+  scaled_counts_matrix,
+  cluster_rows = FALSE,         # Keep specified row order
+  cluster_cols = FALSE,         # Keep specified column order
+  annotation_col = annotation_col,  # Column annotations
+  # annotation_row = row_annotation,  # Row annotations
+  show_rownames = TRUE,         # Show row names (e.g., DMR locations)
+  show_colnames = FALSE,        # Hide column names
+  # main = "Control Aging Unique DMRs Across Individuals (p-value<0.01)",
+  color = color_palette,        # Apply red-white color palette
+  annotation_colors = annotation_colors,  # Apply custom annotation colors
+  fontsize_row = 15,            # Adjust font size for rows
+  fontsize_col = 6,             # Adjust font size for columns
+  border_color = NA             # Remove gridlines between cells
+)
+# Close the graphic device
+dev.off()
+```
+
+
+
+
+
+#extra# there are some part of the old script about annotation that i did not use but will include it here as well.
+```{r, eval=FALSE}
+#pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]$overlapFeature))
+ol <- findOverlapsOfPeaks(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+ol$venn_cnt
+ol$peaklist
+
+CairoPDF("OverlapFeatures.pdf")
+for (i in 1:1){
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05"]]$overlapFeature), main="Isolation: YCvsA_Stress vs Control")
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_E05"]]$overlapFeature), main="Isolation: YCvsA_Stress vs Enriched")
+  pie1(table(ol$overlappingPeaks[["GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]$overlapFeature), main="Isolation: YCvsA_Enriched vs Control")
+}
+dev.off()
+
+#After that I will create objects to each part of the Venn I would like to annotate.
+y_C_a_SCE <- ol$peaklist[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]
+y_C_a_S <- ol$peaklist[["GR_EarlyC_OLD_S05"]]
+y_C_a_C <- ol$peaklist[["GR_EarlyC_OLD_C05"]]
+y_C_a_E <- ol$peaklist[["GR_EarlyC_OLD_E05"]]
+
+y_C_a_SC <- ol$peaklist[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_C05"]]
+y_C_a_EC <- ol$peaklist[["GR_EarlyC_OLD_C05///GR_EarlyC_OLD_E05"]]
+y_C_a_ES <- ol$peaklist[["GR_EarlyC_OLD_S05///GR_EarlyC_OLD_E05"]]
+
+#MeSH.Gga.eg.db
+
+
+#https://bioconductor.org/packages/release/bioc/vignettes/ChIPpeakAnno/inst/doc/ChIPpeakAnno.html
+library ("ChIPseeker")
+supportedUCSCtables(genome = "galGal6")
+gg_txdb <- makeTxDbFromUCSC(genome="galGal6", tablename="ensGene")
+
+#all the peaks from all the comparisons (i will run these line to each one of the files using common and unique peaks for each treatment)
+peak_file <- as.data.frame(resbind05)
+peak_file <- as.data.frame(y_C_a_SCE)
+peak_file <- as.data.frame(y_C_a_S)
+peak_file <- as.data.frame(y_C_a_C)
+peak_file <- as.data.frame(y_C_a_E)
+
+peak_file <- as.data.frame(y_C_a_SC)
+peak_file <- as.data.frame(y_C_a_EC)
+peak_file <- as.data.frame(y_C_a_ES)
+
+peak_file <- subset(peak_file, select=c(seqnames, start,end))
+                    names(peak_file) <- c("CHR", "BP", "BP2")
+
+peak_anno_function <- function(input_data){
+  b2 <- input_data[,c("CHR" , "BP" , "BP2")]
+  write.table(b2 , "annotate_file.txt" , sep = "\t" , col.names = TRUE , row.names = FALSE)
+  peakAnno <- annotatePeak("H:/Medicina Veterin?ria/2017.POSDOC-ESALQ-USP/Experimento_Isolation/RresultsAAGGA6/EarlyCvsOlds/annotate_file.txt",
+                           TxDb=gg_txdb, annoDb="org.Gg.eg.db")
+  return(peakAnno)
+}
+
+peak_chicken <- peak_anno_function(peak_file)
+plotAnnoPie(peak_chicken)
+info_chicken <- peak_chicken@anno@elementMetadata
+
+
+all <- as.data.frame(peak_file)
+y_C_a_SCE <- as.data.frame(peak_file)
+y_C_a_S <- as.data.frame(peak_file)
+y_C_a_C <- as.data.frame(peak_file)
+y_C_a_E <- as.data.frame(peak_file)
+
+y_C_a_SC <- as.data.frame(peak_file)
+y_C_a_EC <- as.data.frame(peak_file)
+y_C_a_ES <- as.data.frame(peak_file)
+
+#info_chicken$loc.id <- rownames(all$loc.id)
+all <- cbind(all, info_chicken , all=T)
+#all_info <- merge(all, info_chicken , all=T)
+
+y_C_a_SCE  <- cbind(y_C_a_SCE , info_chicken , all=T)
+y_C_a_S <- cbind(y_C_a_S, info_chicken , all=T)
+y_C_a_C<- cbind(y_C_a_C, info_chicken , all=T)
+y_C_a_E<- cbind(y_C_a_E, info_chicken , all=T)
+
+y_C_a_SC<- cbind(y_C_a_SC, info_chicken , all=T)
+y_C_a_EC<- cbind(y_C_a_EC, info_chicken , all=T)
+y_C_a_ES<- cbind(y_C_a_ES, info_chicken , all=T)
+
+
+write.table(all , "y_C_a_All.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_SCE , "y_C_a_SCE.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_S , "y_C_a_S.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_C , "y_C_a_C.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_E , "y_C_a_E.txt" , sep="\t" , row.names = F , quote = F)
+
+write.table(y_C_a_SC , "y_C_a_SC.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_EC , "y_C_a_EC.txt" , sep="\t" , row.names = F , quote = F)
+write.table(y_C_a_ES , "y_C_a_ES.txt" , sep="\t" , row.names = F , quote = F)
+
+
+plotAnnoPie(all$annotation)
+
+
+##ONLY DEG
+
+
+for_path_DEG <- list( "y_C_a_All"= all$ENTREZID, 
+                      "y_C_a_SCE"= y_C_a_SCE$ENTREZID, 
+                      "y_C_a_S"=  y_C_a_S$ENTREZID, 
+                      "y_C_a_C"=  y_C_a_C$ENTREZID, 
+                      "y_C_a_E"= y_C_a_E$ENTREZID)
+for_path_DEG <- list( "y_C_a_SCE"= y_C_a_SCE$ENTREZID, 
+                      "y_C_a_S"=  y_C_a_S$ENTREZID, 
+                      "y_C_a_C"=  y_C_a_C$ENTREZID, 
+                      "y_C_a_E"= y_C_a_E$ENTREZID)
+
+for_path_DEG <- list( "y_C_a_SCE"= y_C_a_SCE$ENTREZID, 
+                      "y_C_a_S"=  y_C_a_S$ENTREZID, 
+                      "y_C_a_C"=  y_C_a_C$ENTREZID, 
+                      "y_C_a_E"= y_C_a_E$ENTREZID,
+                      "y_C_a_SC"= y_C_a_SC$ENTREZID,
+                      "y_C_a_EC"= y_C_a_EC$ENTREZID,
+                      "y_C_a_ES"= y_C_a_ES$ENTREZID)   
+
+
+library(clusterProfiler)
+
+GO_analysis <- compareCluster(geneClusters = for_path_DEG , fun = "enrichGO" , ont="BP" ,OrgDb=org.Gg.eg.db, pvalueCutoff = 0.9, pAdjustMethod = "fdr", readable=T)
+jpeg("GO_ANALYSIS_genes_ONLY.jpeg" , width = 900 , height = 850)
+dotplot(GO_analysis)
+dev.off()
+kegg_analysis <- compareCluster(geneClusters = for_path_DEG , fun = "enrichKEGG" ,organism="gga", pvalueCutoff = 0.5, pAdjustMethod = "fdr")
+jpeg("KEGG_ANALYSIS_genes_ONLY.jpeg" , width = 600 , height = 850)
+dotplot(kegg_analysis)
+dev.off()
+
+kegg_analysis <- compareCluster(geneClusters = for_path_DEG , fun = "enrichDO" ,OrgDb=org.Gg.eg.db, pvalueCutoff = 0.5, pAdjustMethod = "fdr")
+
+groupGO_analysis <- compareCluster(geneClusters = for_path_DEG , level=15, fun = "groupGO" , ont="BP" ,OrgDb=org.Gg.eg.db)
+jpeg("groupGO_ANALYSIS_genes_ONLY_level15.jpeg" , width = 1200 , height = 850)
+dotplot(groupGO_analysis , showCategory=30)
+dev.off()
+
+
+
+
+re <- makeVennDiagram(Peaks=ol, NameOfPeaks=names(ol), main="Isolation: Young Controls vs Adults P<0.05", col = "black",fill = c("red", "blue", "yellow"), alpha = 0.50)
+
+library(reshape2)
+
+SC<- subsetByOverlaps(GR_EarlyC_OLD_S, GR_EarlyC_OLD_C)                      
+#398
+SE<- subsetByOverlaps(GR_EarlyC_OLD_S, GR_EarlyC_OLD_E)
+#228
+CE<- subsetByOverlaps(GR_EarlyC_OLD_C, GR_EarlyC_OLD_E)
+#236
+
+GR_EarlyC_OLD_S05<-subset(GR_EarlyC_OLD_S, edgeR.p.value<.05)
+GR_EarlyC_OLD_C05<-subset(GR_EarlyC_OLD_C, edgeR.p.value<.05)
+GR_EarlyC_OLD_E05<-subset(GR_EarlyC_OLD_E, edgeR.p.value<.05)
+resbind05 <-
+
+SC05<- subsetByOverlaps(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_C05)                      
+#88
+SE05<- subsetByOverlaps(GR_EarlyC_OLD_S05, GR_EarlyC_OLD_E05)
+#42
+CE05<- subsetByOverlaps(GR_EarlyC_OLD_C05, GR_EarlyC_OLD_E05)
+#49
+
+
+
+#
+#width of each chromossome coverad by the test
+library('regioneR')
+
+#some counts
+width(resbind)
+width(resbind05)
+
+genome <- BSgenome.Ggallus.UCSC.galGal6
+head(seqlengths(genome))
+getSeq(genome, as.character=FALSE)
+
+aggregate(width(resbind), by=list(Category=resbind$Test), function(x) c(mean = mean(x), sd = sd(x)))
+
+#Category   x.mean     x.sd
+#1  y_C_a_C 348.6082 492.6483
+#2  y_C_a_E 512.2944 919.9470
+#3  y_C_a_S 362.6235 516.8533
+
+plot(density(as.matrix(resbind$edgeR.p.value)))
+plot(density(as.matrix(resbind$edgeR.logFC)))
+
+#size simulation
+library('regioneR')
+TT<- createRandomRegions(nregions=100000, length.mean=407.84, length.sd=643.15, genome=genome)
+
+TT_df<- as.data.frame (TT)
+table(TT_df$seqnames)
+
+resbind_df <- as.data.frame(resbind)
+table(resbind_df$seqnames)
+
+resbind05_df <- as.data.frame(resbind05)
+table(resbind05_df$seqnames)
+
+# params <- new("BSParams", X = Celegans, FUN = alphabetFrequency,
+# bsapply(params)
+
+```
+
+
+#extra# also these are extra stuff that i performed to creat #saf files take them to the main counts in bash to be able to generate heatmaps
+```{r, eval = FALSE	}
+#now i am downloading the resbind 05 as a data frame and i am going to make a saf file out of it and take it to the main count data to see how many counts these DMRs have for all the individuals##
+
+# Convert `resbind05` to a data frame
+resbind05_df <- as.data.frame(resbind05)
+
+# Save as an Excel file using writexl
+library(writexl)
+write_xlsx(resbind05_df, "resbind05_data.xlsx")
+
+# Load the packages
+library(GenomicRanges)  # For creating GenomicRanges objects
+library(readxl)         # For reading Excel files
+# Define the path to your Excel file (replace this with your actual path)
+excel_file_path <- "//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/R/merged_data_aging.xlsx"
+
+# Read the Excel file into a data frame
+# If your Excel file has multiple sheets, you can specify the sheet using the sheet parameter
+genomic_data <- read_excel(excel_file_path, sheet = 1)
+
+# Display the first few rows to confirm the data loaded correctly
+head(genomic_data)
+
+# Create a GenomicRanges object from the loaded data
+granges_object <- GRanges(
+  seqnames = genomic_data$seqnames,           # Chromosome column
+  ranges = IRanges(
+    start = genomic_data$start,                 # Start position column
+    end = genomic_data$end                      # End position column
+  ),
+  strand = if ("strand" %in% colnames(genomic_data)) genomic_data$strand else "*"  # Optional: If strand column exists
+)
+
+# Adding additional metadata columns if they are present in your dataset
+# This removes the columns used to define the ranges (chromosome, start, end, and strand if used)
+metadata_columns <- setdiff(colnames(genomic_data), c("chromosome", "start", "end", "strand"))
+if (length(metadata_columns) > 0) {
+  mcols(granges_object) <- genomic_data[, metadata_columns, drop = FALSE]
+}
+
+
+# Define the output path for your .rda file (replace with your desired path)
+output_file_path <- "//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/R/merged_data_aging.rda"
+# Check the created GenomicRanges object to confirm
+granges_object
+
+# Save the GenomicRanges object to an .rda file
+# save(granges_object, file = output_file_path)
+
+# Confirm that the file was saved successfully
+cat("File saved successfully at:", output_file_path)
+
+
+
+######saf file for generating heatmaps######
+
+# Check if your data has a 'gene_id' column, if not, create a default one
+if (!"gene_id" %in% colnames(genomic_data)) {
+  genomic_data$gene_id <- paste0("gene_", seq_len(nrow(genomic_data)))  # Creating a default gene ID
+}
+
+# Create a SAF data frame
+saf_data <- data.frame(
+  GeneID = genomic_data$gene_id,         # Unique identifier for each feature (e.g., gene ID)
+  Chr = genomic_data$seqnames,         # Chromosome column
+  Start = genomic_data$start,            # Start position column
+  End = genomic_data$end,                # End position column
+  Strand = if ("strand" %in% colnames(genomic_data)) genomic_data$strand else "*"  # Default to '*' if no strand info
+)
+
+# Display the first few rows of the SAF data to verify
+head(saf_data)
+
+# Define the output file path (replace this with your desired path and file name)
+saf_file_path <- "//argos.storage.uu.se/MyFolder$/farso212/others/my papers/Isolation stress/isolation data and R/aging/R/final_sorted.saf"
+
+# Save the data frame as a tab-delimited SAF file
+# write.table(saf_data, file = saf_file_path, sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+# Confirm that the file was saved successfully
+cat("SAF file saved successfully at:", saf_file_path)
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
